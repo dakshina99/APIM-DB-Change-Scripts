@@ -1,0 +1,29 @@
+version: '3.8'
+services:
+  apim_db:
+    image: mysql:8.0
+    container_name: apim_db_container
+    environment:
+      MYSQL_DATABASE: apim_db
+      MYSQL_USER: apim_user
+      MYSQL_PASSWORD: apimpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    command: --character-set-server=latin1 --collation-server=latin1_swedish_ci --default-authentication-plugin=mysql_native_password
+    volumes:
+      - ./dbscripts/apimgt:/docker-entrypoint-initdb.d
+    ports:
+      - "3306:3306"
+
+  shared_db:
+    image: mysql:8.0
+    container_name: shared_db_container
+    environment:
+      MYSQL_DATABASE: shared_db
+      MYSQL_USER: shared_user
+      MYSQL_PASSWORD: sharedpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    command: --character-set-server=latin1 --collation-server=latin1_swedish_ci --default-authentication-plugin=mysql_native_password
+    volumes:
+      - ./dbscripts:/docker-entrypoint-initdb.d
+    ports:
+      - "3307:3306"

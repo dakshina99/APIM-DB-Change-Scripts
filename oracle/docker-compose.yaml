@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  apim_db:
+    image: gvenzl/oracle-xe
+    container_name: apim_db_container
+    environment:
+      ORACLE_PASSWORD: apimpass
+      ORACLE_DATABASE: apim_db
+    ports:
+      - "1521:1521"
+    restart: unless-stopped
+    volumes:
+      - ./dbscripts:/scripts
+
+  shared_db:
+    image: gvenzl/oracle-xe
+    container_name: shared_db_container
+    environment:
+      ORACLE_PASSWORD: sharedpass
+      ORACLE_DATABASE: shared_db
+    ports:
+      - "1522:1521"
+    restart: unless-stopped
+    volumes:
+      - ./dbscripts:/scripts

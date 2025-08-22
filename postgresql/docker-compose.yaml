@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  apim_db:
+    image: postgres:16
+    container_name: apim_db_container
+    environment:
+      POSTGRES_DB: apim_db
+      POSTGRES_USER: apim_user
+      POSTGRES_PASSWORD: apimpass
+    volumes:
+      - ./dbscripts/apimgt:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+
+  shared_db:
+    image: postgres:16
+    container_name: shared_db_container
+    environment:
+      POSTGRES_DB: shared_db
+      POSTGRES_USER: shared_user
+      POSTGRES_PASSWORD: sharedpass
+    volumes:
+      - ./dbscripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5433:5432"
