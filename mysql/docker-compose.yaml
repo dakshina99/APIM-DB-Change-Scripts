@@ -2,7 +2,7 @@ version: '3.8'
 services:
   apim_db:
     image: mysql:8.0
-    container_name: apim_db_container
+    container_name: apim_db_container_mysql
     environment:
       MYSQL_DATABASE: apim_db
       MYSQL_USER: apim_user
@@ -16,7 +16,7 @@ services:
 
   shared_db:
     image: mysql:8.0
-    container_name: shared_db_container
+    container_name: shared_db_container_mysql
     environment:
       MYSQL_DATABASE: shared_db
       MYSQL_USER: shared_user

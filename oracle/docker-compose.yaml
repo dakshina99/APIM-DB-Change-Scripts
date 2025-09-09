@@ -2,7 +2,7 @@ version: '3.8'
 services:
   apim_db:
     image: gvenzl/oracle-xe
-    container_name: apim_db_container
+    container_name: apim_db_container_oracle
     environment:
       ORACLE_PASSWORD: apimpass
       ORACLE_DATABASE: apim_db
@@ -14,7 +14,7 @@ services:
 
   shared_db:
     image: gvenzl/oracle-xe
-    container_name: shared_db_container
+    container_name: shared_db_container_oracle
     environment:
       ORACLE_PASSWORD: sharedpass
       ORACLE_DATABASE: shared_db

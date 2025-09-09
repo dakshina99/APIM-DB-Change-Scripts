@@ -2,7 +2,7 @@ version: '3.8'
 services:
   apim_db:
     image: mcr.microsoft.com/azure-sql-edge
-    container_name: apim_db_container
+    container_name: apim_db_container_mssql
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "RootPass123!"
@@ -14,7 +14,7 @@ services:
 
   shared_db:
     image: mcr.microsoft.com/azure-sql-edge
-    container_name: shared_db_container
+    container_name: shared_db_container_mssql
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "RootPass123!"
