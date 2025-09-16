@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  apim_db:
+    image: ibmcom/db2-amd64
+    # image: ibmcom/db2
+    container_name: apim_db_container_db2
+    platform: linux/amd64
+    privileged: true
+    ports:
+      - "50000:50000"
+    environment:
+      LICENSE: accept
+      DB2INST1_PASSWORD: apimpass
+      DBNAME: apim_db
+    restart: unless-stopped
+    volumes:
+      - ./dbscripts:/dbscripts:ro
+  
+  shared_db:
+    image: ibmcom/db2-amd64
+    # image: ibmcom/db2
+    container_name: shared_db_container_db2
+    platform: linux/amd64
+    privileged: true
+    ports:
+      - "50001:50000"
+    environment:
+      LICENSE: accept
+      DB2INST1_PASSWORD: sharedpass
+      DBNAME: shareddb
+    restart: unless-stopped
+    volumes:
+      - ./dbscripts:/dbscripts:ro
