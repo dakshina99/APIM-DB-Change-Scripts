@@ -1,62 +1,108 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
-# Detect OS
-OS=$(uname -s)
+##############################################
+# Utility: Install Dependencies
+##############################################
+install_dependencies() {
+  echo "🔍 Checking for required commands..."
 
-# Function to install missing commands
-install_if_missing() {
-  local cmd=$1
-  local pkg=$2
-
-  if ! command -v "$cmd" &> /dev/null; then
-    echo "$cmd not found. Installing $pkg..."
-
-    if [[ "$OS" == "Darwin" ]]; then
-      if ! command -v brew &> /dev/null; then
-        echo "Homebrew not found. Please install it from https://brew.sh/"
-        exit 1
-      fi
-      brew install "$pkg"
-    elif command -v apt-get &> /dev/null; then
-      sudo apt-get update && sudo apt-get install -y "$pkg"
-    elif command -v yum &> /dev/null; then
-      sudo yum install -y "$pkg"
+  # Check for wget
+  if ! command -v wget &> /dev/null; then
+    echo "⚠️  wget not found. Installing..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      brew install wget
+    elif [[ -f /etc/debian_version ]]; then
+      sudo apt-get update && sudo apt-get install -y wget
+    elif [[ -f /etc/redhat-release ]]; then
+      sudo yum install -y wget
     else
-      echo "Unsupported package manager. Please install $pkg manually."
+      echo "❌ Unsupported OS. Please install wget manually."
       exit 1
     fi
   else
-    echo "$cmd is already installed."
+    echo "✅ wget is already installed."
+  fi
+
+  # Check for docker
+  if ! command -v docker &> /dev/null; then
+    echo "❌ Docker is not installed. Please install Docker first."
+    exit 1
+  else
+    echo "✅ Docker is available."
+  fi
+
+  # Check for docker-compose
+  if ! command -v docker-compose &> /dev/null; then
+    echo "⚠️  docker-compose not found. Installing..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      brew install docker-compose
+    elif [[ -f /etc/debian_version ]]; then
+      sudo apt-get update && sudo apt-get install -y docker-compose
+    elif [[ -f /etc/redhat-release ]]; then
+      sudo yum install -y docker-compose
+    else
+      echo "❌ Unsupported OS. Please install docker-compose manually."
+      exit 1
+    fi
+  else
+    echo "✅ docker-compose is already installed."
+  fi
+
+  # Check for find
+  if ! command -v find &> /dev/null; then
+    echo "⚠️  find not found. Installing findutils..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      brew install findutils
+    elif [[ -f /etc/debian_version ]]; then
+      sudo apt-get update && sudo apt-get install -y findutils
+    elif [[ -f /etc/redhat-release ]]; then
+      sudo yum install -y findutils
+    else
+      echo "❌ Unsupported OS. Please install findutils manually."
+      exit 1
+    fi
+  else
+    echo "✅ find is already installed."
   fi
 }
 
-# Required tools
-install_if_missing wget wget
-install_if_missing docker-compose docker-compose
-install_if_missing find findutils
+##############################################
+# Main Execution
+##############################################
+main() {
+  install_dependencies
 
-# Check for docker
-if ! command -v docker &> /dev/null; then
-  echo "Docker is not installed. Please install Docker first."
-  exit 1
-fi
+  CONFIG_FILE="repository/conf/deployment.toml"
+  DBSCRIPTS_DIR="dbscripts"
+  APIMGT_DIR="${DBSCRIPTS_DIR}/apimgt"
+  REPO_LIB_DIR="repository/components/lib"
+  JDBC_URL="https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar"
+  JDBC_DRIVER="postgresql-42.7.4.jar"
+  BACKUP_DIR="dbscripts_backup_$(date +%Y%m%d_%H%M%S)"
 
-# Config file
-CONFIG_FILE="repository/conf/deployment.toml"
+  echo "⚙️  Updating deployment.toml..."
 
-# sed compatibility: use BSD/macOS version
-if [[ "$OS" == "Darwin" ]]; then
-  sed -i '' '/\[database.apim_db\]/,/^$/d' "$CONFIG_FILE"
-  sed -i '' '/\[database.shared_db\]/,/^$/d' "$CONFIG_FILE"
-else
-  sed -i '/\[database.apim_db\]/,/^$/d' "$CONFIG_FILE"
-  sed -i '/\[database.shared_db\]/,/^$/d' "$CONFIG_FILE"
-fi
+  # Check if config file exists
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "❌ Configuration file $CONFIG_FILE not found!"
+    exit 1
+  fi
 
-# Append DB configs
-cat <<EOF >> "$CONFIG_FILE"
+  # Cross-platform sed handling (macOS vs Linux)
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    SED_OPT=(-i '')
+  else
+    SED_OPT=(-i)
+  fi
+
+  # Delete old DB blocks
+  sed "${SED_OPT[@]}" '/\[database.apim_db\]/,/^$/d' "$CONFIG_FILE"
+  sed "${SED_OPT[@]}" '/\[database.shared_db\]/,/^$/d' "$CONFIG_FILE"
+
+  # Append PostgreSQL configs
+  cat <<EOF >> "$CONFIG_FILE"
 
 [database.apim_db]
 type = "postgre"
@@ -75,27 +121,59 @@ driver = "org.postgresql.Driver"
 validationQuery = "SELECT 1"
 EOF
 
-# Clean SQL files
-DBSCRIPTS_DIR="dbscripts"
-APIMGT_DIR="${DBSCRIPTS_DIR}/apimgt"
+  echo "✅ Database configuration updated successfully."
 
-find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
-find "$APIMGT_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
+  # Backup dbscripts directory before cleaning
+  echo "📂 Creating backup of dbscripts directory..."
+  if [[ -d "$DBSCRIPTS_DIR" ]]; then
+    cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
+    echo "✅ Backup created at $BACKUP_DIR"
+    
+    echo "🧹 Cleaning up old SQL scripts (keeping only postgresql.sql)..."
+    find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
+    if [[ -d "$APIMGT_DIR" ]]; then
+      find "$APIMGT_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
+    fi
+    echo "✅ SQL files cleaned successfully."
+  else
+    echo "⚠️  dbscripts directory not found. Skipping backup and cleanup."
+  fi
 
-echo "Updated deployment.toml and cleaned SQL files."
+  # Check if lib directory exists
+  if [[ ! -d "$REPO_LIB_DIR" ]]; then
+    echo "⚠️  Repository lib directory $REPO_LIB_DIR not found. Creating it..."
+    mkdir -p "$REPO_LIB_DIR"
+  fi
 
-# JDBC download
-REPO_LIB_DIR="repository/components/lib"
-JDBC_URL="https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar"
-JDBC_DRIVER="postgresql-42.7.4.jar"
+  # Check if JDBC driver already exists
+  JDBC_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
+  if [[ -f "$JDBC_PATH" ]]; then
+    echo "✅ PostgreSQL JDBC driver already exists at $JDBC_PATH"
+  else
+    echo "⬇️  Downloading PostgreSQL JDBC driver..."
+    if wget -q -O "$JDBC_DRIVER" "$JDBC_URL"; then
+      echo "📦 Installing JDBC driver into $REPO_LIB_DIR..."
+      mv "$JDBC_DRIVER" "$REPO_LIB_DIR"
+      echo "✅ JDBC driver downloaded and placed in $REPO_LIB_DIR"
+    else
+      echo "❌ Failed to download JDBC driver!"
+      exit 1
+    fi
+  fi
 
-echo "Downloading JDBC driver..."
-wget -O "$JDBC_DRIVER" "$JDBC_URL"
-mv "$JDBC_DRIVER" "$REPO_LIB_DIR"
+  echo "🚀 Starting Docker containers..."
+  docker-compose up -d
 
-echo "JDBC driver placed in $REPO_LIB_DIR."
+  echo "✅ PostgreSQL containers started successfully."
+  sleep 10  # Wait for DBs to initialize
 
-# Start Docker containers
-docker-compose up -d
+  # Restore dbscripts directory from backup
+  if [[ -d "$BACKUP_DIR" ]]; then
+    echo "🔄 Restoring dbscripts directory from backup..."
+    rm -rf "$DBSCRIPTS_DIR"
+    mv "$BACKUP_DIR" "$DBSCRIPTS_DIR"
+    echo "✅ dbscripts directory restored from backup."
+  fi
+}
 
-echo "PostgreSQL containers started successfully."
+main "$@"

@@ -4,7 +4,46 @@ This guide explains how to set up WSO2 API Manager (APIM) with different databas
 
 ---
 
-## Steps to Set Up
+## Quick Setup (Recommended)
+
+### Using the Common Setup Script
+
+1. **Download the setup script**
+   ```bash
+   curl -sL https://raw.githubusercontent.com/dakshina99/APIM-DB-Change-Scripts/main/setup-db.sh -o setup-db.sh
+   chmod +x setup-db.sh
+   ```
+
+2. **Run from your APIM_HOME directory**
+   ```bash
+   cd <APIM_HOME>
+   ./setup-db.sh <database_type>
+   ```
+
+   **Supported database types:** `mysql`, `postgresql`, `oracle`, `mssql`, `db2`
+
+   **Examples:**
+   ```bash
+   ./setup-db.sh mysql
+   ./setup-db.sh postgresql
+   ./setup-db.sh oracle
+   ```
+
+3. **Start APIM**
+   ```bash
+   ./bin/api-manager.sh
+   ```
+
+4. **Cleanup when done**
+   ```bash
+   ./cleanup.sh
+   ```
+
+---
+
+## Manual Setup (Alternative)
+
+### Steps to Set Up Manually
 
 1. **Select the Database Type**
    - Choose the database type you want to use (e.g., MySQL, PostgreSQL, Oracle, MSSQL).
