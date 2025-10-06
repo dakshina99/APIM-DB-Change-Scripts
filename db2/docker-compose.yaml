@@ -15,8 +15,11 @@ services:
       DBNAME: apim_db
     restart: unless-stopped
     volumes:
+      # Persistent volume for DB2 instance and data
+      - apim_db_data:/database
+      # Read-only mount for your SQL scripts
       - ./dbscripts:/dbscripts:ro
-  
+
   shared_db:
     image: ibmcom/db2-amd64
     # image: ibmcom/db2
@@ -28,7 +31,17 @@ services:
     environment:
       LICENSE: accept
       DB2INST1_PASSWORD: sharedpass
-      DBNAME: shareddb
+      DBNAME: shared_db
     restart: unless-stopped
     volumes:
+      # Persistent volume for DB2 instance and data
+      - shared_db_data:/database
+      # Read-only mount for your SQL scripts
       - ./dbscripts:/dbscripts:ro
+
+# -------------------------
+# Persistent volumes section
+# -------------------------
+volumes:
+  apim_db_data:
+  shared_db_data:
