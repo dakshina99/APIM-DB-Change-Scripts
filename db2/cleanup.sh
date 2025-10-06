@@ -5,6 +5,6 @@ set -e
 COMPOSE_FILE="docker-compose.yaml"
 
 echo "Stopping and removing containers, networks, and volumes..."
-docker-compose down -v
+docker-compose down
 
 echo "Docker Compose environment cleaned up successfully."

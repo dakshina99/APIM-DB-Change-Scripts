@@ -3,7 +3,7 @@ version: "3.8"
 services:
   apim_db:
     image: ibmcom/db2-amd64
-    # image: ibmcom/db2
+    # image: ibmcom/db2-amd64
     container_name: apim_db_container_db2
     platform: linux/amd64
     privileged: true
@@ -15,14 +15,11 @@ services:
       DBNAME: apim_db
     restart: unless-stopped
     volumes:
-      # Persistent volume for DB2 instance and data
-      - apim_db_data:/database
-      # Read-only mount for your SQL scripts
       - ./dbscripts:/dbscripts:ro
-
+  
   shared_db:
     image: ibmcom/db2-amd64
-    # image: ibmcom/db2
+    # image: ibmcom/db2-amd64
     container_name: shared_db_container_db2
     platform: linux/amd64
     privileged: true
@@ -31,17 +28,7 @@ services:
     environment:
       LICENSE: accept
       DB2INST1_PASSWORD: sharedpass
-      DBNAME: shared_db
+      DBNAME: shareddb
     restart: unless-stopped
     volumes:
-      # Persistent volume for DB2 instance and data
-      - shared_db_data:/database
-      # Read-only mount for your SQL scripts
       - ./dbscripts:/dbscripts:ro
-
-# -------------------------
-# Persistent volumes section
-# -------------------------
-volumes:
-  apim_db_data:
-  shared_db_data:
