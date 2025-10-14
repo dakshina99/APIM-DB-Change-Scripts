@@ -10,8 +10,7 @@ This guide explains how to set up WSO2 API Manager (APIM) with different databas
 
 1. **Download the setup script**
    ```bash
-   curl -sL https://raw.githubusercontent.com/dakshina99/APIM-DB-Change-Scripts/main/setup-db.sh -o setup-db.sh
-   chmod +x setup-db.sh
+   curl -sL https://raw.githubusercontent.com/dakshina99/APIM-DB-Change-Scripts/main/setup-db.sh -o setup-db.sh && chmod +x setup-db.sh
    ```
 
 2. **Run from your APIM_HOME directory**
