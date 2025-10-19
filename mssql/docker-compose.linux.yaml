@@ -1,0 +1,23 @@
+version: '3.8'
+services:
+  apim_db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: apim_db_container_mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "RootPass123!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    # Full SQL Server - includes sqlcmd tools for Linux
+
+  shared_db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: shared_db_container_mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "RootPass123!"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1434:1433"
+    # Full SQL Server - includes sqlcmd tools for Linux

@@ -9,8 +9,7 @@ services:
       MSSQL_PID: "Developer"
     ports:
       - "1433:1433"
-    volumes:
-      - ./init:/docker-entrypoint-initdb.d
+    # Azure SQL Edge - ARM64 compatible for Apple Silicon Macs
 
   shared_db:
     image: mcr.microsoft.com/azure-sql-edge
@@ -21,5 +20,4 @@ services:
       MSSQL_PID: "Developer"
     ports:
       - "1434:1433"
-    volumes:
-      - ./init:/docker-entrypoint-initdb.d
+    # Azure SQL Edge - ARM64 compatible for Apple Silicon Macs

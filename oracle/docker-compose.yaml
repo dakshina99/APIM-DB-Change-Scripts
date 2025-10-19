@@ -1,7 +1,7 @@
 version: '3.8'
 services:
   apim_db:
-    image: gvenzl/oracle-xe
+    image: gvenzl/oracle-xe:18-slim
     container_name: apim_db_container_oracle
     environment:
       ORACLE_PASSWORD: apimpass
@@ -13,7 +13,7 @@ services:
       - ./dbscripts:/scripts
 
   shared_db:
-    image: gvenzl/oracle-xe
+    image: gvenzl/oracle-xe:18-slim
     container_name: shared_db_container_oracle
     environment:
       ORACLE_PASSWORD: sharedpass
