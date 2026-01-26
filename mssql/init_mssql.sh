@@ -77,7 +77,8 @@ install_platform_dependencies() {
     brew update > /dev/null 2>&1 || log_warning "Homebrew update had issues, continuing..."
     
     log_info "Installing Microsoft SQL Server tools..."
-    if brew install msodbcsql mssql-tools > /dev/null 2>&1; then
+    log_info "You may be prompted to accept license terms during installation."
+    if brew install msodbcsql mssql-tools; then
       log_success "Installed Microsoft SQL Server tools"
       
       # Add sqlcmd to PATH for current session
