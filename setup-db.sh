@@ -11,7 +11,7 @@ set -euo pipefail
 ##############################################
 
 # Script version
-SCRIPT_VERSION="1.0.0"
+SCRIPT_VERSION="1.1.0"
 
 # Repository information
 REPO_OWNER="dakshina99"
@@ -21,6 +21,10 @@ BRANCH="main"
 
 # Supported database types
 SUPPORTED_DBS=("mysql" "postgresql" "oracle" "mssql" "db2")
+
+# Database dump file paths (optional)
+APIM_DB_DUMP=""
+SHARED_DB_DUMP=""
 
 ##############################################
 
@@ -55,6 +59,11 @@ print_usage() {
     for db in "${SUPPORTED_DBS[@]}"; do
         log_info "  - $db"
     done
+    echo ""
+    log_info "Options:"
+    log_info "  You will be prompted to optionally provide database dump files."
+    log_info "  If dump files are provided, they will be imported instead of"
+    log_info "  running the default initialization scripts."
     echo ""
     log_info "Examples:"
     log_info "  $0 mysql"
@@ -160,6 +169,76 @@ download_database_files() {
     log_success "Database files downloaded successfully."
 }
 
+validate_dump_file() {
+    local dump_path="$1"
+    local db_name="$2"
+    
+    if [[ -z "$dump_path" ]]; then
+        return 0  # Empty path is valid (no dump provided)
+    fi
+    
+    if [[ ! -f "$dump_path" ]]; then
+        log_error "Dump file for $db_name not found: $dump_path"
+        exit 1
+    fi
+    
+    # Check if file is readable
+    if [[ ! -r "$dump_path" ]]; then
+        log_error "Dump file for $db_name is not readable: $dump_path"
+        exit 1
+    fi
+    
+    # Check file extension
+    if [[ ! "$dump_path" =~ \.(sql|sql\.gz|dump)$ ]]; then
+        log_warning "Dump file for $db_name has unusual extension: $dump_path"
+        log_warning "Expected .sql, .sql.gz, or .dump extension"
+    fi
+    
+    log_success "Dump file validated for $db_name: $dump_path"
+}
+
+prompt_for_dumps() {
+    echo ""
+    log_info "--------------------------------------------------"
+    log_info "Database Dump Import (Optional)"
+    log_info "--------------------------------------------------"
+    log_info "You can optionally provide database dump files to import."
+    log_info "If not provided, default initialization scripts will be used."
+    log_info "Press Enter to skip if you don't have dump files."
+    echo ""
+    
+    read -rp "Path to APIM DB dump file (or press Enter to skip): " APIM_DB_DUMP
+    if [[ -n "$APIM_DB_DUMP" ]]; then
+        # Expand ~ to home directory if present
+        APIM_DB_DUMP="${APIM_DB_DUMP/#\~/$HOME}"
+        # Convert to absolute path if relative
+        if [[ ! "$APIM_DB_DUMP" = /* ]]; then
+            APIM_DB_DUMP="$(pwd)/$APIM_DB_DUMP"
+        fi
+        validate_dump_file "$APIM_DB_DUMP" "apim_db"
+    fi
+    
+    read -rp "Path to Shared DB dump file (or press Enter to skip): " SHARED_DB_DUMP
+    if [[ -n "$SHARED_DB_DUMP" ]]; then
+        # Expand ~ to home directory if present
+        SHARED_DB_DUMP="${SHARED_DB_DUMP/#\~/$HOME}"
+        # Convert to absolute path if relative
+        if [[ ! "$SHARED_DB_DUMP" = /* ]]; then
+            SHARED_DB_DUMP="$(pwd)/$SHARED_DB_DUMP"
+        fi
+        validate_dump_file "$SHARED_DB_DUMP" "shared_db"
+    fi
+    
+    # Export for use by init scripts
+    export APIM_DB_DUMP
+    export SHARED_DB_DUMP
+    
+    if [[ -n "$APIM_DB_DUMP" ]] || [[ -n "$SHARED_DB_DUMP" ]]; then
+        log_info "Dump files will be imported after database containers start."
+    fi
+    echo ""
+}
+
 setup_database() {
     local db_type="$1"
     local init_script="init_${db_type}.sh"
@@ -169,7 +248,10 @@ setup_database() {
         exit 1
     fi
     log_info "   Running initialization script: $init_script"
-    ./$init_script
+    
+    # Pass dump file paths to init script via environment variables
+    APIM_DB_DUMP="$APIM_DB_DUMP" SHARED_DB_DUMP="$SHARED_DB_DUMP" ./$init_script
+    
     log_success "Database setup completed successfully."
 }
 
@@ -229,6 +311,10 @@ main() {
     validate_database_type "$db_type"
     validate_apim_home
     check_dependencies
+    
+    # Prompt for optional dump files
+    prompt_for_dumps
+    
     # Download and setup
     download_database_files "$db_type"
     setup_database "$db_type"

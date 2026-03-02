@@ -34,6 +34,51 @@ This guide explains how to set up WSO2 API Manager (APIM) with different databas
 
 ---
 
+## Database Dump Import (Optional)
+
+You can import existing database dumps instead of using the default initialization scripts. This is useful for:
+- Restoring from a backup
+- Setting up a database with pre-existing data
+- Testing with production-like data
+
+### How to Use Database Dumps
+
+When running `setup-db.sh`, you will be prompted to optionally provide dump file paths:
+
+```bash
+./setup-db.sh
+# Select database type: mysql
+# Path to APIM DB dump file (or press Enter to skip): /path/to/apim_db_dump.sql
+# Path to Shared DB dump file (or press Enter to skip): /path/to/shared_db_dump.sql
+```
+
+### Supported Dump Formats
+
+- `.sql` - Plain SQL dump files
+- `.sql.gz` - Gzip compressed SQL dump files
+- `.dump` - Database dump files
+
+### Creating Database Dumps
+
+To create a dump from an existing MySQL database:
+
+```bash
+# Plain SQL dump
+mysqldump -u username -p database_name > dump.sql
+
+# Compressed dump
+mysqldump -u username -p database_name | gzip > dump.sql.gz
+```
+
+### Notes on Dump Import
+
+- When dump files are provided, the default initialization scripts are skipped
+- Dumps are imported after the database containers are fully ready
+- You can provide just one dump file (e.g., only APIM DB) and skip the other
+- The script validates dump file existence before proceeding
+
+---
+
 ## Manual Setup (Alternative)
 
 ### Steps to Set Up Manually

@@ -30,6 +30,16 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Database dump file paths (from environment variables)
+APIM_DB_DUMP="${APIM_DB_DUMP:-}"
+SHARED_DB_DUMP="${SHARED_DB_DUMP:-}"
+
+# Flag to track if we're using dumps
+USING_DUMPS=false
+if [[ -n "$APIM_DB_DUMP" ]] || [[ -n "$SHARED_DB_DUMP" ]]; then
+    USING_DUMPS=true
+fi
+
 # Check for native tools instead of installing dependencies
 check_dependencies() {
   log_info "Checking for required native tools..."
@@ -62,6 +72,75 @@ check_dependencies() {
     log_error "Please install Docker with the Compose plugin or install docker-compose."
     exit 1
   fi
+}
+
+# Function to wait for MySQL to be ready
+wait_for_mysql() {
+    local container_name="$1"
+    local max_attempts=30
+    local attempt=1
+    
+    log_info "Waiting for MySQL container '$container_name' to be ready..."
+    
+    while [ $attempt -le $max_attempts ]; do
+        if docker exec "$container_name" mysqladmin ping -h localhost -u root -prootpass --silent &>/dev/null; then
+            log_success "MySQL container '$container_name' is ready!"
+            return 0
+        fi
+        
+        log_info "  Attempt $attempt/$max_attempts - MySQL not ready yet, waiting..."
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+    
+    log_error "MySQL container '$container_name' failed to become ready after $max_attempts attempts"
+    return 1
+}
+
+# Function to import a database dump
+# Uses root credentials for proper privileges (CREATE, DROP, ALTER, etc.)
+import_dump() {
+    local container_name="$1"
+    local database_name="$2"
+    local dump_file="$3"
+    
+    # Use root credentials for dump import (application users may lack required privileges)
+    local root_user="root"
+    local root_pass="rootpass"
+    
+    if [[ -z "$dump_file" ]]; then
+        log_info "No dump file provided for $database_name, skipping import"
+        return 0
+    fi
+    
+    if [[ ! -f "$dump_file" ]]; then
+        log_error "Dump file not found: $dump_file"
+        return 1
+    fi
+    
+    log_info "Importing dump into $database_name from $dump_file..."
+    log_info "  Using root credentials for proper privileges"
+    
+    # Determine if the file is compressed
+    if [[ "$dump_file" == *.gz ]]; then
+        log_info "  Detected gzipped dump file, decompressing during import..."
+        if gunzip -c "$dump_file" | docker exec -i "$container_name" mysql -u "$root_user" -p"$root_pass" "$database_name" 2>&1; then
+            log_success "Dump imported successfully into $database_name"
+            return 0
+        else
+            log_error "Failed to import dump into $database_name"
+            return 1
+        fi
+    else
+        # Regular SQL file
+        if docker exec -i "$container_name" mysql -u "$root_user" -p"$root_pass" "$database_name" < "$dump_file" 2>&1; then
+            log_success "Dump imported successfully into $database_name"
+            return 0
+        else
+            log_error "Failed to import dump into $database_name"
+            return 1
+        fi
+    fi
 }
 
 log_info "Starting MySQL database initialization process..."
@@ -107,40 +186,45 @@ EOF
 
 log_success "Database configuration updated successfully"
 
-# Cleanup unnecessary SQL files with backup
+# Cleanup unnecessary SQL files with backup (only if not using dumps)
 DBSCRIPTS_DIR="dbscripts"
 APIMGT_DIR="${DBSCRIPTS_DIR}/apimgt"
 BACKUP_DIR=""  # Initialize backup directory variable
 
-log_info "Processing database scripts cleanup..."
+# Only process dbscripts if we're not using dump files
+if [ "$USING_DUMPS" = false ]; then
+    log_info "Processing database scripts cleanup..."
 
-if [ -d "$DBSCRIPTS_DIR" ]; then
-    # Create backup directory with timestamp
-    BACKUP_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    BACKUP_DIR="${DBSCRIPTS_DIR}_backup_${BACKUP_TIMESTAMP}"
-    
-    log_info "Creating backup of dbscripts directory at $BACKUP_DIR..."
-    cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
-    log_success "Backup created successfully at $BACKUP_DIR"
-    
-    # Count files before cleanup
-    TOTAL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "*.sql" | wc -l)
-    MYSQL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "mysql.sql" | wc -l)
-    FILES_TO_DELETE=$((TOTAL_SQL_FILES - MYSQL_SQL_FILES))
-    
-    log_info "Found $TOTAL_SQL_FILES SQL files total, keeping $MYSQL_SQL_FILES mysql.sql files"
-    log_info "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
-    
-    # Remove unnecessary SQL files (keep only mysql.sql files)
-    find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "mysql.sql" -delete
-    
-    if [ -d "$APIMGT_DIR" ]; then
-        find "$APIMGT_DIR" -type f -name "*.sql" ! -name "mysql.sql" -delete
+    if [ -d "$DBSCRIPTS_DIR" ]; then
+        # Create backup directory with timestamp
+        BACKUP_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+        BACKUP_DIR="${DBSCRIPTS_DIR}_backup_${BACKUP_TIMESTAMP}"
+        
+        log_info "Creating backup of dbscripts directory at $BACKUP_DIR..."
+        cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
+        log_success "Backup created successfully at $BACKUP_DIR"
+        
+        # Count files before cleanup
+        TOTAL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "*.sql" | wc -l)
+        MYSQL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "mysql.sql" | wc -l)
+        FILES_TO_DELETE=$((TOTAL_SQL_FILES - MYSQL_SQL_FILES))
+        
+        log_info "Found $TOTAL_SQL_FILES SQL files total, keeping $MYSQL_SQL_FILES mysql.sql files"
+        log_info "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
+        
+        # Remove unnecessary SQL files (keep only mysql.sql files)
+        find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "mysql.sql" -delete
+        
+        if [ -d "$APIMGT_DIR" ]; then
+            find "$APIMGT_DIR" -type f -name "*.sql" ! -name "mysql.sql" -delete
+        fi
+        
+        log_success "Database scripts cleanup completed. Backup available at $BACKUP_DIR"
+    else
+        log_warning "dbscripts directory not found, skipping cleanup"
     fi
-    
-    log_success "Database scripts cleanup completed. Backup available at $BACKUP_DIR"
 else
-    log_warning "dbscripts directory not found, skipping cleanup"
+    log_info "Using database dumps - skipping dbscripts cleanup"
 fi
 
 # Download JDBC driver only if not present
@@ -148,6 +232,41 @@ REPO_LIB_DIR="repository/components/lib"
 JDBC_URL="https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.30/mysql-connector-java-8.0.30.jar"
 JDBC_DRIVER="mysql-connector-java-8.0.30.jar"
 JDBC_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
+
+# Modify docker-compose if using dumps (to skip auto-initialization from scripts)
+if [ "$USING_DUMPS" = true ]; then
+    log_info "Configuring Docker Compose for dump import mode..."
+    
+    # Create a modified docker-compose without volume mounts for init scripts
+    cat > docker-compose.yaml <<'DUMPEOF'
+version: '3.8'
+services:
+  apim_db:
+    image: mysql:8.0
+    container_name: apim_db_container_mysql
+    environment:
+      MYSQL_DATABASE: apim_db
+      MYSQL_USER: apim_user
+      MYSQL_PASSWORD: apimpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    command: --character-set-server=latin1 --collation-server=latin1_swedish_ci --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3306:3306"
+
+  shared_db:
+    image: mysql:8.0
+    container_name: shared_db_container_mysql
+    environment:
+      MYSQL_DATABASE: shared_db
+      MYSQL_USER: shared_user
+      MYSQL_PASSWORD: sharedpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    command: --character-set-server=latin1 --collation-server=latin1_swedish_ci --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3307:3306"
+DUMPEOF
+    log_success "Docker Compose configured for dump import (no auto-init scripts)"
+fi
 
 log_info "Checking MySQL JDBC driver availability..."
 
@@ -212,7 +331,39 @@ if $DOCKER_COMPOSE_CMD up -d; then
     
     # Wait for databases to be fully ready
     log_info "Waiting for databases to be fully initialized..."
-    sleep 10
+    
+    # Wait for MySQL containers to be ready (proper health check)
+    wait_for_mysql "apim_db_container_mysql"
+    wait_for_mysql "shared_db_container_mysql"
+    
+    # Import database dumps if provided
+    if [ "$USING_DUMPS" = true ]; then
+        log_info "==============================================="
+        log_info "    IMPORTING DATABASE DUMPS"
+        log_info "==============================================="
+        echo
+        
+        IMPORT_FAILED=false
+        
+        if [[ -n "$APIM_DB_DUMP" ]]; then
+            if ! import_dump "apim_db_container_mysql" "apim_db" "$APIM_DB_DUMP"; then
+                IMPORT_FAILED=true
+            fi
+        fi
+        
+        if [[ -n "$SHARED_DB_DUMP" ]]; then
+            if ! import_dump "shared_db_container_mysql" "shared_db" "$SHARED_DB_DUMP"; then
+                IMPORT_FAILED=true
+            fi
+        fi
+        
+        if [ "$IMPORT_FAILED" = true ]; then
+            log_warning "Some dump imports failed. Please check the logs above."
+        else
+            log_success "All database dumps imported successfully!"
+        fi
+        echo
+    fi
     
     log_success "MySQL database initialization process completed!"
     
@@ -222,6 +373,20 @@ if $DOCKER_COMPOSE_CMD up -d; then
     log_info "    DATABASE CONNECTION INFORMATION"
     log_info "==============================================="
     echo
+    
+    if [ "$USING_DUMPS" = true ]; then
+        log_info "Mode: Database Dump Import"
+        if [[ -n "$APIM_DB_DUMP" ]]; then
+            log_info "  APIM DB Dump: $APIM_DB_DUMP"
+        fi
+        if [[ -n "$SHARED_DB_DUMP" ]]; then
+            log_info "  Shared DB Dump: $SHARED_DB_DUMP"
+        fi
+        echo
+    else
+        log_info "Mode: Default Initialization Scripts"
+        echo
+    fi
     
     log_info "APIM Database Connection Details:"
     log_info "  Host: localhost"
