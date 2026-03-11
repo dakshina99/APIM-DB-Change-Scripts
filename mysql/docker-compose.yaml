@@ -8,7 +8,7 @@ services:
       MYSQL_USER: apim_user
       MYSQL_PASSWORD: apimpass
       MYSQL_ROOT_PASSWORD: rootpass
-    command: --character-set-server=latin1 --collation-server=latin1_swedish_ci --default-authentication-plugin=mysql_native_password
+    command: --character-set-server=latin1 --collation-server=latin1_bin --default-authentication-plugin=mysql_native_password
     volumes:
       - ./dbscripts/apimgt:/docker-entrypoint-initdb.d
     ports:
@@ -22,7 +22,7 @@ services:
       MYSQL_USER: shared_user
       MYSQL_PASSWORD: sharedpass
       MYSQL_ROOT_PASSWORD: rootpass
-    command: --character-set-server=latin1 --collation-server=latin1_swedish_ci --default-authentication-plugin=mysql_native_password
+    command: --character-set-server=latin1 --collation-server=latin1_bin --default-authentication-plugin=mysql_native_password
     volumes:
       - ./dbscripts:/docker-entrypoint-initdb.d
     ports:
