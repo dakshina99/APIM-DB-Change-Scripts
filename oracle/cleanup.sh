@@ -8,6 +8,3 @@ echo "Stopping and removing containers, networks, and volumes..."
 docker-compose down -v
 
 echo "Docker Compose environment cleaned up successfully."
-
-colima stop 
-echo "Colima stopped successfully."

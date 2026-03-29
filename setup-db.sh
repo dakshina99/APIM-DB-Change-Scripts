@@ -278,7 +278,6 @@ print_next_steps() {
             ;;
         "oracle")
             log_info "Oracle ports: 1521 (apim_db), 1522 (shared_db)"
-            log_info "Note: Oracle requires Colima and may take longer to initialize"
             ;;
         "mssql")
             log_info "MSSQL ports: 1433 (apim_db), 1434 (shared_db)"

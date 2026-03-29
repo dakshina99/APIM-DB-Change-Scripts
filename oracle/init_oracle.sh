@@ -191,9 +191,24 @@ log_info "Running docker compose up -d..."
 docker compose -f docker-compose.yaml up -d
 
 log_info "Waiting for Oracle databases to become available..."
-log_info "This may take up to 2 minutes for Oracle to fully initialize..."
-sleep 120
-log_success "Oracle databases should now be available."
+wait_for_oracle() {
+  local container=$1
+  local max_attempts=60
+  local attempt=1
+  while [ $attempt -le $max_attempts ]; do
+    if docker exec "$container" healthcheck.sh > /dev/null 2>&1; then
+      log_success "$container is ready."
+      return 0
+    fi
+    log_info "Waiting for $container... (attempt $attempt/$max_attempts)"
+    sleep 5
+    attempt=$((attempt + 1))
+  done
+  log_error "$container did not become ready in time."
+  exit 1
+}
+wait_for_oracle apim_db_container_oracle
+wait_for_oracle shared_db_container_oracle
 
 log_info "Executing database setup scripts..."
 log_info "Setting up APIM database..."

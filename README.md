@@ -118,10 +118,6 @@ mysqldump -u username -p database_name | gzip > dump.sql.gz
 - **Dependencies**
   - Some database types will install additional dependencies on your PC during setup.
 
-- **Oracle DB**
-  - Oracle DB is **only supported on Colima** (Setup will automatically install Colima and shutdown on the Cleanup).
-  - It does **not work** on Rancher Desktop like other types.
-
 - **Changing Database Versions**
   - You can change the base DB image in the Docker Compose files to use different DB versions.
   - ⚠️ This may require additional changes in the provided scripts to ensure compatibility.
