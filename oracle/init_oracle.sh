@@ -38,37 +38,11 @@ log_info "Detected OS: $OS"
 
 ## Dependency install logic removed as requested
 log_info "Checking environment..."
-if [[ "$OS" == "Darwin" ]]; then
-  log_info "macOS detected. Checking for other Docker engines (Rancher Desktop)..."
-  # Stop Rancher Desktop if running
-  if pgrep -x "Rancher Desktop" > /dev/null; then
-    log_warning "Rancher Desktop is currently running."
-    log_info "Oracle setup requires Colima, which conflicts with Rancher Desktop."
-    read -rp "Do you want to stop Rancher Desktop and proceed? (yes/no): " stop_rancher
-    if [[ "$stop_rancher" == "yes" ]]; then
-      log_info "Stopping Rancher Desktop..."
-      osascript -e 'quit app "Rancher Desktop"'
-      sleep 5
-      log_success "Rancher Desktop stopped."
-    else
-      log_error "Oracle database setup requires Colima, which cannot run alongside Rancher Desktop."
-      log_error "Please stop Rancher Desktop manually and re-run the script."
-      exit 1
-    fi
-  else
-    log_info "Rancher Desktop is not running."
-  fi
-  log_info "Checking Colima status..."
-  if colima status | grep -q 'Running'; then
-    log_success "Colima is already running."
-  else
-    log_info "Starting Colima with x86_64 architecture, 6GB RAM, and 6 CPUs..."
-    colima start --arch x86_64 --memory 6 --cpu 6
-    log_success "Colima started successfully."
-  fi
-else
-  log_info "Non-macOS system detected. Skipping Colima setup."
+if ! docker info > /dev/null 2>&1; then
+  log_error "Docker is not running. Please start Docker (Rancher Desktop, Docker Desktop, etc.) and re-run the script."
+  exit 1
 fi
+log_success "Docker is available."
 log_success "Environment check complete."
 
 # Config file
@@ -89,7 +63,7 @@ cat <<EOF >> "$CONFIG_FILE"
 
 [database.apim_db]
 type = "oracle"
-url = "jdbc:oracle:thin:@localhost:1521/XE"
+url = "jdbc:oracle:thin:@localhost:1521/apim_db"
 username = "APIM_DB"
 password = "apimpass"
 driver = "oracle.jdbc.driver.OracleDriver"
@@ -97,7 +71,7 @@ validationQuery = "SELECT 1 FROM DUAL"
 
 [database.shared_db]
 type = "oracle"
-url = "jdbc:oracle:thin:@localhost:1522/XE"
+url = "jdbc:oracle:thin:@localhost:1522/shared_db"
 username = "SHARED_DB"
 password = "sharedpass"
 driver = "oracle.jdbc.driver.OracleDriver"
@@ -186,9 +160,9 @@ cat <<'EOF' > wait-and-run-apim.sh
 set -e
 
 echo "Running APIM user script..."
-docker exec -i apim_db_container_oracle bash -c "echo -e '@/scripts/user/apim_user.sql\nEXIT;' | sqlplus -s sys/apimpass@//apim_db_container_oracle:1521/XE as sysdba"
+docker exec -i apim_db_container_oracle bash -c "echo -e '@/scripts/user/apim_user.sql\nEXIT;' | sqlplus -s sys/apimpass@//apim_db_container_oracle:1521/apim_db as sysdba"
 echo "Running APIM DB script..."
-docker exec -it apim_db_container_oracle bash -c "echo -e '@/scripts/apimgt/oracle.sql\nEXIT;' | sqlplus -s APIM_DB/apimpass@//apim_db_container_oracle:1521/XE"
+docker exec -it apim_db_container_oracle bash -c "echo -e '@/scripts/apimgt/oracle.sql\nEXIT;' | sqlplus -s APIM_DB/apimpass@//apim_db_container_oracle:1521/apim_db"
 
 echo "APIM database setup completed."
 EOF
@@ -202,9 +176,9 @@ cat <<'EOF' > wait-and-run-shared.sh
 set -e
 
 echo "Running SHARED user script..."
-docker exec -it shared_db_container_oracle bash -c "echo -e '@/scripts/user/shared_user.sql\nEXIT;' | sqlplus -s sys/sharedpass@//shared_db_container_oracle:1521/XE as sysdba"
+docker exec -it shared_db_container_oracle bash -c "echo -e '@/scripts/user/shared_user.sql\nEXIT;' | sqlplus -s sys/sharedpass@//shared_db_container_oracle:1521/shared_db as sysdba"
 echo "Running SHARED DB script..."
-docker exec -it shared_db_container_oracle bash -c "echo -e '@/scripts/oracle.sql\nEXIT;' | sqlplus -s SHARED_DB/sharedpass@//shared_db_container_oracle:1521/XE"
+docker exec -it shared_db_container_oracle bash -c "echo -e '@/scripts/oracle.sql\nEXIT;' | sqlplus -s SHARED_DB/sharedpass@//shared_db_container_oracle:1521/shared_db"
 
 echo "SHARED database setup completed."
 EOF
@@ -249,17 +223,17 @@ log_info "   - Oracle containers are running"
 log_info "   - APIM database connection details:"
 log_info "       Host: localhost"
 log_info "       Port: 1521"
-log_info "       SID: XE"
+log_info "       SID: apim_db"
 log_info "       Username: APIM_DB"
 log_info "       Password: apimpass"
 log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1521/XE"
 log_info "   - SHARED database connection details:"
 log_info "       Host: localhost"
 log_info "       Port: 1522"
-log_info "       SID: XE"
+log_info "       SID: shared_db"
 log_info "       Username: SHARED_DB"
 log_info "       Password: sharedpass"
-log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1522/XE"
+log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1522/shared_db"
 log_info "   - JDBC driver installed in $REPO_LIB_DIR"
 log_info "   - Database configurations updated in $CONFIG_FILE"
 log_info "   - dbscripts directory restored to original state"
