@@ -42,10 +42,19 @@ if [[ "$OS" == "Darwin" ]]; then
   log_info "macOS detected. Checking for other Docker engines (Rancher Desktop)..."
   # Stop Rancher Desktop if running
   if pgrep -x "Rancher Desktop" > /dev/null; then
-    log_info "Rancher Desktop is running. Attempting to stop it..."
-    osascript -e 'quit app "Rancher Desktop"'
-    sleep 5
-    log_success "Rancher Desktop stopped."
+    log_warning "Rancher Desktop is currently running."
+    log_info "Oracle setup requires Colima, which conflicts with Rancher Desktop."
+    read -rp "Do you want to stop Rancher Desktop and proceed? (yes/no): " stop_rancher
+    if [[ "$stop_rancher" == "yes" ]]; then
+      log_info "Stopping Rancher Desktop..."
+      osascript -e 'quit app "Rancher Desktop"'
+      sleep 5
+      log_success "Rancher Desktop stopped."
+    else
+      log_error "Oracle database setup requires Colima, which cannot run alongside Rancher Desktop."
+      log_error "Please stop Rancher Desktop manually and re-run the script."
+      exit 1
+    fi
   else
     log_info "Rancher Desktop is not running."
   fi
