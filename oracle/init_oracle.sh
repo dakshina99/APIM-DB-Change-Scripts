@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+VERBOSE=false
+for arg in "$@"; do
+  case "$arg" in
+    -v|--verbose) VERBOSE=true ;;
+  esac
+done
+
 # Colors for better log visibility
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -26,28 +33,29 @@ log_error() {
   echo -e "${RED}[ERROR]${NC} $1"
 }
 
+log_verbose() {
+  [[ "$VERBOSE" == "true" ]] && echo -e "${BLUE}[INFO]${NC} $1" || true
+}
+
 log_info "======================================"
 log_info "Oracle Database Setup for WSO2 APIM"
 log_info "======================================"
 log_info "Starting Oracle database initialization process..."
-
+[[ "$VERBOSE" == "false" ]] && log_info "(Run with -v for verbose output)"
 
 # Detect OS
 OS=$(uname -s)
-log_info "Detected OS: $OS"
+log_verbose "Detected OS: $OS"
 
-## Dependency install logic removed as requested
-log_info "Checking environment..."
 if ! docker info > /dev/null 2>&1; then
   log_error "Docker is not running. Please start Docker (Rancher Desktop, Docker Desktop, etc.) and re-run the script."
   exit 1
 fi
 log_success "Docker is available."
-log_success "Environment check complete."
 
 # Config file
 CONFIG_FILE="repository/conf/deployment.toml"
-log_info "Updating database configuration in $CONFIG_FILE..."
+log_verbose "Updating database configuration in $CONFIG_FILE..."
 
 if [[ "$OS" == "Darwin" ]]; then
   sed -i '' '/\[database.apim_db\]/,/^$/d' "$CONFIG_FILE"
@@ -56,9 +64,9 @@ else
   sed -i '/\[database.apim_db\]/,/^$/d' "$CONFIG_FILE"
   sed -i '/\[database.shared_db\]/,/^$/d' "$CONFIG_FILE"
 fi
-log_success "Removed old database configurations."
+log_verbose "Removed old database configurations."
 
-log_info "Adding Oracle database configurations..."
+log_verbose "Adding Oracle database configurations..."
 cat <<EOF >> "$CONFIG_FILE"
 
 [database.apim_db]
@@ -77,10 +85,10 @@ password = "sharedpass"
 driver = "oracle.jdbc.driver.OracleDriver"
 validationQuery = "SELECT 1 FROM DUAL"
 EOF
-log_success "Oracle database configurations added successfully."
+log_success "Database configurations updated in $CONFIG_FILE."
 
 # Clean SQL files
-log_info "Managing database scripts..."
+log_verbose "Managing database scripts..."
 DBSCRIPTS_DIR="dbscripts"
 APIMGT_DIR="${DBSCRIPTS_DIR}/apimgt"
 USER_DIR="${DBSCRIPTS_DIR}/user"
@@ -90,23 +98,20 @@ SHARED_USER_FILE="${USER_DIR}/shared_user.sql"
 # Create backup of dbscripts directory if it exists
 if [ -d "$DBSCRIPTS_DIR" ]; then
   BACKUP_DIR="${DBSCRIPTS_DIR}_backup_$(date +%Y%m%d_%H%M%S)"
-  log_info "Creating backup of $DBSCRIPTS_DIR as $BACKUP_DIR..."
+  log_verbose "Creating backup of $DBSCRIPTS_DIR as $BACKUP_DIR..."
   cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
-  log_success "Backup created successfully at $BACKUP_DIR"
-  log_info "Cleaning unnecessary SQL files from $DBSCRIPTS_DIR..."
+  log_success "Backup created at $BACKUP_DIR"
+  log_verbose "Cleaning unnecessary SQL files..."
   # Remove all SQL files except oracle.sql files
   find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "oracle.sql" -delete 2>/dev/null || true
   find "$APIMGT_DIR" -type f -name "*.sql" ! -name "oracle.sql" -delete 2>/dev/null || true
-  log_success "Cleaned SQL files (kept oracle.sql files)."
 else
   log_warning "No existing $DBSCRIPTS_DIR directory found."
 fi
 
-log_info "Creating Oracle user creation scripts..."
+log_verbose "Creating Oracle user creation scripts..."
 mkdir -p "$USER_DIR"
-log_success "Created directory: $USER_DIR"
-
-log_info "Writing APIM user creation script..."
+log_verbose "Writing APIM user creation script..."
 cat <<EOF > "$APIM_USER_FILE"
 -- APIM_USER
 CREATE USER APIM_DB IDENTIFIED BY apimpass QUOTA UNLIMITED ON USERS QUOTA UNLIMITED ON SYSTEM;
@@ -115,7 +120,7 @@ GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER, CREATE PROC
 GRANT UNLIMITED TABLESPACE TO APIM_DB;
 EOF
 
-log_info "Writing SHARED user creation script..."
+log_verbose "Writing SHARED user creation script..."
 cat <<EOF > "$SHARED_USER_FILE"
 -- SHARED_USER
 CREATE USER SHARED_DB IDENTIFIED BY sharedpass QUOTA UNLIMITED ON USERS QUOTA UNLIMITED ON SYSTEM;
@@ -124,10 +129,10 @@ GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER, CREATE PROC
 GRANT UNLIMITED TABLESPACE TO SHARED_DB;
 EOF
 
-log_success "Oracle user creation scripts written to $APIM_USER_FILE and $SHARED_USER_FILE"
+log_verbose "Oracle user creation scripts written to $APIM_USER_FILE and $SHARED_USER_FILE"
 
 CREATE_SHARED_PDB_FILE="${USER_DIR}/create_shared_pdb.sql"
-log_info "Writing shared_db PDB creation script..."
+log_verbose "Writing shared_db PDB creation script..."
 cat <<EOF > "$CREATE_SHARED_PDB_FILE"
 CREATE PLUGGABLE DATABASE shared_db
   ADMIN USER pdb_admin IDENTIFIED BY apimpass
@@ -138,9 +143,9 @@ ALTER SESSION SET CONTAINER = shared_db;
 CREATE TABLESPACE users DATAFILE '/opt/oracle/oradata/FREE/shared_db/users01.dbf' SIZE 50M AUTOEXTEND ON NEXT 10M MAXSIZE UNLIMITED;
 EXIT;
 EOF
-log_success "PDB creation script written to $CREATE_SHARED_PDB_FILE"
+log_verbose "PDB creation script written to $CREATE_SHARED_PDB_FILE"
 
-log_info "Managing Oracle JDBC driver..."
+log_verbose "Managing Oracle JDBC driver..."
 REPO_LIB_DIR="repository/components/lib"
 JDBC_URL="https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.7.0.25.01/ojdbc11-23.7.0.25.01.jar"
 JDBC_DRIVER="ojdbc11-23.7.0.25.01.jar"
@@ -148,15 +153,13 @@ JDBC_DRIVER_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
 
 # Create lib directory if it doesn't exist
 mkdir -p "$REPO_LIB_DIR"
-log_success "Ensured lib directory exists: $REPO_LIB_DIR"
 
 # Check if JDBC driver already exists
 if [ -f "$JDBC_DRIVER_PATH" ]; then
-  log_success "Oracle JDBC driver already exists at $JDBC_DRIVER_PATH"
-  log_info "Skipping download."
+  log_success "Oracle JDBC driver present at $JDBC_DRIVER_PATH"
 else
-  log_info "Oracle JDBC driver not found. Downloading from Maven repository..."
-  log_info "URL: $JDBC_URL"
+  log_info "Downloading Oracle JDBC driver..."
+  log_verbose "URL: $JDBC_URL"
   # Download to temporary location first
   TEMP_DRIVER="/tmp/$JDBC_DRIVER"
   if curl -L -o "$TEMP_DRIVER" "$JDBC_URL"; then
@@ -169,8 +172,8 @@ else
   fi
 fi
 
-log_info "Creating database setup scripts..."
-log_info "Writing APIM database setup script..."
+log_verbose "Creating database setup scripts..."
+log_verbose "Writing APIM database setup script..."
 cat <<'EOF' > wait-and-run-apim.sh
 #!/bin/bash
 set -e
@@ -197,9 +200,9 @@ echo "APIM database setup completed."
 EOF
 
 chmod +x wait-and-run-apim.sh
-log_success "Created executable script: wait-and-run-apim.sh"
+log_verbose "Created wait-and-run-apim.sh"
 
-log_info "Writing SHARED database setup script..."
+log_verbose "Writing SHARED database setup script..."
 cat <<'EOF' > wait-and-run-shared.sh
 #!/bin/bash
 set -e
@@ -220,20 +223,20 @@ echo "SHARED database setup completed."
 EOF
 
 chmod +x wait-and-run-shared.sh
-log_success "Created executable script: wait-and-run-shared.sh"
+log_verbose "Created wait-and-run-shared.sh"
 
 log_info "Starting Docker containers..."
-log_info "Cleaning up any existing Oracle containers..."
+log_verbose "Cleaning up any existing Oracle containers..."
 for container in apim_db_container_oracle shared_db_container_oracle oracle_db_container; do
   if docker ps -a --format '{{.Names}}' | grep -q "^${container}$" 2>/dev/null; then
-    log_info "Removing existing container: $container"
+    log_verbose "Removing existing container: $container"
     docker rm -f "$container" 2>/dev/null || true
   fi
 done
-log_info "Running docker compose up -d..."
+log_verbose "Running docker compose up -d..."
 docker compose -f docker-compose.yaml up -d
 
-log_info "Waiting for Oracle databases to become available..."
+log_info "Waiting for Oracle to become available (this may take a few minutes)..."
 wait_for_oracle() {
   local container=$1
   local max_attempts=60
@@ -243,7 +246,10 @@ wait_for_oracle() {
       log_success "$container is ready."
       return 0
     fi
-    log_info "Waiting for $container... (attempt $attempt/$max_attempts)"
+    log_verbose "Waiting for $container... (attempt $attempt/$max_attempts)"
+    if (( attempt % 10 == 0 )); then
+      log_info "Still waiting for $container... ($((attempt * 5))s elapsed)"
+    fi
     sleep 5
     attempt=$((attempt + 1))
   done
@@ -252,21 +258,22 @@ wait_for_oracle() {
 }
 wait_for_oracle oracle_db_container
 
-log_info "Executing database setup scripts..."
+log_verbose "Executing database setup scripts..."
 log_info "Setting up APIM database..."
 ./wait-and-run-apim.sh
+log_success "APIM database setup complete."
 
 log_info "Setting up SHARED database..."
 ./wait-and-run-shared.sh
+log_success "SHARED database setup complete."
 
-log_info "Restoring dbscripts directory from backup..."
+log_verbose "Restoring dbscripts directory from backup..."
 if [ -n "$BACKUP_DIR" ] && [ -d "$BACKUP_DIR" ]; then
-  log_info "Removing modified dbscripts directory..."
+  log_verbose "Removing modified dbscripts directory..."
   rm -rf "$DBSCRIPTS_DIR"
-  log_info "Restoring dbscripts from backup: $BACKUP_DIR..."
+  log_verbose "Restoring dbscripts from backup: $BACKUP_DIR..."
   mv "$BACKUP_DIR" "$DBSCRIPTS_DIR"
-  log_success "dbscripts directory restored successfully."
-  log_info "Backup cleanup completed."
+  log_success "Restored dbscripts to original state."
 else
   log_warning "No backup directory found to restore from."
 fi
@@ -291,7 +298,6 @@ log_info "       Service: shared_db"
 log_info "       Username: SHARED_DB"
 log_info "       Password: sharedpass"
 log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1521/shared_db"
-log_info "   - JDBC driver installed in $REPO_LIB_DIR"
-log_info "   - Database configurations updated in $CONFIG_FILE"
-log_info "   - dbscripts directory restored to original state"
+log_verbose "   - JDBC driver: $JDBC_DRIVER_PATH"
+log_verbose "   - Config: $CONFIG_FILE"
 log_info "======================================"

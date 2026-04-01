@@ -11,6 +11,13 @@
 
 set -euo pipefail
 
+VERBOSE=false
+for arg in "$@"; do
+  case "$arg" in
+    -v|--verbose) VERBOSE=true ;;
+  esac
+done
+
 # Colors for log visibility
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,6 +47,10 @@ log_config() {
     echo -e "${CYAN}[CONFIG]${NC} $1"
 }
 
+log_verbose() {
+    [[ "$VERBOSE" == "true" ]] && echo -e "${BLUE}[INFO]${NC} $1" || true
+}
+
 ##############################################
 # Utility: Install platform-specific dependencies
 ##############################################
@@ -49,7 +60,7 @@ install_platform_dependencies() {
     
     # Check if sqlcmd is already available
     if command -v sqlcmd &> /dev/null; then
-      log_success "sqlcmd is already installed"
+      log_verbose "sqlcmd is already installed"
       return 0
     fi
     
@@ -61,30 +72,30 @@ install_platform_dependencies() {
     fi
     
     log_info "Installing Microsoft SQL Server tools via Homebrew..."
-    log_info "This may take a few minutes..."
+    log_verbose "This may take a few minutes..."
     
     # Add Microsoft tap and install tools
     if ! brew tap | grep -q "microsoft/mssql-release"; then
-      log_info "Adding Microsoft Homebrew tap..."
+      log_verbose "Adding Microsoft Homebrew tap..."
       if brew tap microsoft/mssql-release https://github.com/Microsoft/homebrew-mssql-release > /dev/null 2>&1; then
-        log_success "Added Microsoft Homebrew tap"
+        log_verbose "Added Microsoft Homebrew tap"
       else
         log_warning "Failed to add Microsoft tap, continuing..."
       fi
     fi
     
-    log_info "Updating Homebrew..."
+    log_verbose "Updating Homebrew..."
     brew update > /dev/null 2>&1 || log_warning "Homebrew update had issues, continuing..."
     
-    log_info "Installing Microsoft SQL Server tools..."
-    log_info "You may be prompted to accept license terms during installation."
+    log_verbose "Installing Microsoft SQL Server tools..."
+    log_verbose "You may be prompted to accept license terms during installation."
     if brew install msodbcsql mssql-tools; then
       log_success "Installed Microsoft SQL Server tools"
       
       # Add sqlcmd to PATH for current session
       export PATH="/usr/local/opt/mssql-tools/bin:$PATH"
       export PATH="/opt/homebrew/opt/mssql-tools/bin:$PATH"  # For Apple Silicon
-      log_success "Added sqlcmd to PATH"
+      log_verbose "Added sqlcmd to PATH"
     else
       log_error "Failed to install Microsoft SQL Server tools"
       log_error "You may need to run this manually:"
@@ -94,7 +105,7 @@ install_platform_dependencies() {
     fi
     
   else
-    log_info "Detected Linux - will use SQL Server container with built-in sqlcmd tools"
+    log_verbose "Detected Linux - will use SQL Server container with built-in sqlcmd tools"
   fi
 }
 
@@ -102,31 +113,31 @@ install_platform_dependencies() {
 # Utility: Check Dependencies
 ##############################################
 check_dependencies() {
-  log_info "Checking for required commands and dependencies..."
+  log_verbose "Checking for required commands and dependencies..."
 
   # Check for docker
   if ! command -v docker &> /dev/null; then
     log_error "Docker is not installed. Please install Docker first."
     exit 1
   else
-    log_success "Docker is available"
+    log_verbose "Docker is available"
   fi
 
   # Determine Docker Compose file based on OS
   if [[ "$OSTYPE" == "darwin"* ]]; then
     COMPOSE_FILE="docker-compose.macos.yaml"
-    log_info "Using macOS-specific Docker Compose file: $COMPOSE_FILE"
+    log_verbose "Using macOS-specific Docker Compose file: $COMPOSE_FILE"
   else
     COMPOSE_FILE="docker-compose.linux.yaml"
-    log_info "Using Linux-specific Docker Compose file: $COMPOSE_FILE"
+    log_verbose "Using Linux-specific Docker Compose file: $COMPOSE_FILE"
   fi
 
   # Check for docker-compose or docker compose and set global variable
   if command -v docker-compose &> /dev/null; then
-    log_success "docker-compose is available"
+    log_verbose "docker-compose is available"
     export DOCKER_COMPOSE_CMD="docker-compose -f $COMPOSE_FILE"
   elif docker compose version &> /dev/null; then
-    log_success "docker compose is available"
+    log_verbose "docker compose is available"
     export DOCKER_COMPOSE_CMD="docker compose -f $COMPOSE_FILE"
   else
     log_error "Neither docker-compose nor docker compose is available. Please install Docker Compose."
@@ -138,7 +149,7 @@ check_dependencies() {
     log_error "curl is not available. Please install curl."
     exit 1
   else
-    log_success "curl is available"
+    log_verbose "curl is available"
   fi
 
   # Install platform-specific dependencies
@@ -160,30 +171,30 @@ wait_for_container_ready() {
     # Try a simple SQL query to ensure SQL Server is ready
     if [[ "$OSTYPE" == "darwin"* ]]; then
       # macOS - use external sqlcmd
-      log_info "Testing SQL Server connection on port $port (attempt $attempt/$max_attempts)..."
+      log_verbose "Testing SQL Server connection on port $port (attempt $attempt/$max_attempts)..."
       
       # Test SQL Server connection
       if sqlcmd -S localhost,$port -U SA -P 'RootPass123!' -Q "SELECT 1" > /dev/null 2>&1; then
-        log_success "Container $container_name is ready and responding to SQL queries (attempt $attempt/$max_attempts)"
+        log_verbose "Container $container_name is ready and responding to SQL queries (attempt $attempt/$max_attempts)"
         return 0
       else
         if [[ $attempt -eq 1 ]]; then
-          log_info "SQL Server initializing (this is normal for the first few attempts)..."
+          log_verbose "SQL Server initializing (this is normal for the first few attempts)..."
         else
-          log_info "SQL Server not ready yet on port $port, retrying..."
+          log_verbose "SQL Server not ready yet on port $port, retrying..."
         fi
       fi
     else
       # Linux - use container's internal sqlcmd
-      log_info "Testing SQL Server connection on port $port (attempt $attempt/$max_attempts)..."
+      log_verbose "Testing SQL Server connection on port $port (attempt $attempt/$max_attempts)..."
       if docker exec -i "$container_name" /opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'RootPass123!' -Q "SELECT 1" > /dev/null 2>&1; then
-        log_success "Container $container_name is ready and responding to SQL queries (attempt $attempt/$max_attempts)"
+        log_verbose "Container $container_name is ready and responding to SQL queries (attempt $attempt/$max_attempts)"
         return 0
       else
         if [[ $attempt -eq 1 ]]; then
-          log_info "SQL Server initializing (this is normal for the first few attempts)..."
+          log_verbose "SQL Server initializing (this is normal for the first few attempts)..."
         else
-          log_info "SQL Server not ready yet on port $port, retrying..."
+          log_verbose "SQL Server not ready yet on port $port, retrying..."
         fi
       fi
     fi
@@ -196,7 +207,7 @@ wait_for_container_ready() {
       wait_time=10
     fi
     
-    log_info "Container $container_name not ready yet (attempt $attempt/$max_attempts), waiting $wait_time seconds..."
+    log_verbose "Container $container_name not ready yet (attempt $attempt/$max_attempts), waiting $wait_time seconds..."
     sleep $wait_time
     ((attempt++))
   done
@@ -222,7 +233,7 @@ run_sql_on_container() {
     port="1434"
   fi
   
-  log_info "Executing SQL command on container $container_name (database: $database)"
+  log_verbose "Executing SQL command on container $container_name (database: $database)"
   
   if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS - use external sqlcmd (installed via Homebrew)
@@ -250,7 +261,7 @@ initialize_databases() {
   local apim_container="apim_db_container_mssql"
   local shared_container="shared_db_container_mssql"
   
-  log_info "Waiting for SQL Server containers to initialize..."
+  log_verbose "Waiting for SQL Server containers to initialize..."
   
   # Wait for both containers to be ready
   if ! wait_for_container_ready "$apim_container" "1433"; then
@@ -378,6 +389,7 @@ display_connection_info() {
 ##############################################
 main() {
   log_info "Starting MSSQL database initialization process..."
+  [[ "$VERBOSE" == "false" ]] && log_info "(Run with -v for verbose output)"
   
   check_dependencies
 
@@ -389,7 +401,7 @@ main() {
   JDBC_DRIVER="mssql-jdbc-12.10.0.jre11.jar"
   BACKUP_DIR=""  # Initialize backup directory variable
 
-  log_info "Updating database configuration in $CONFIG_FILE..."
+  log_verbose "Updating database configuration in $CONFIG_FILE..."
 
   # Check if config file exists
   if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -404,12 +416,12 @@ main() {
     SED_OPT=(-i)
   fi
 
-  log_info "Removing existing database configuration blocks..."
+  log_verbose "Removing existing database configuration blocks..."
   # Delete old DB blocks
   sed "${SED_OPT[@]}" '/\[database.apim_db\]/,/^$/d' "$CONFIG_FILE"
   sed "${SED_OPT[@]}" '/\[database.shared_db\]/,/^$/d' "$CONFIG_FILE"
 
-  log_info "Adding MSSQL database configurations..."
+  log_verbose "Adding MSSQL database configurations..."
   # Append MSSQL configs
   cat <<EOF >> "$CONFIG_FILE"
 
@@ -438,24 +450,24 @@ EOF
   log_success "Database configuration updated successfully"
 
   # Backup and cleanup database scripts
-  log_info "Processing database scripts cleanup..."
+  log_verbose "Processing database scripts cleanup..."
 
   if [[ -d "$DBSCRIPTS_DIR" ]]; then
     # Create backup directory with timestamp
     BACKUP_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
     BACKUP_DIR="${DBSCRIPTS_DIR}_backup_${BACKUP_TIMESTAMP}"
     
-    log_info "Creating backup of dbscripts directory at $BACKUP_DIR..."
+    log_verbose "Creating backup of dbscripts directory at $BACKUP_DIR..."
     cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
-    log_success "Backup created successfully at $BACKUP_DIR"
+    log_verbose "Backup created successfully at $BACKUP_DIR"
     
     # Count files before cleanup
     TOTAL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "*.sql" | wc -l | tr -d ' ')
     MSSQL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "mssql.sql" | wc -l | tr -d ' ')
     FILES_TO_DELETE=$((TOTAL_SQL_FILES - MSSQL_SQL_FILES))
     
-    log_info "Found $TOTAL_SQL_FILES SQL files total, keeping $MSSQL_SQL_FILES mssql.sql files"
-    log_info "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
+    log_verbose "Found $TOTAL_SQL_FILES SQL files total, keeping $MSSQL_SQL_FILES mssql.sql files"
+    log_verbose "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
     
     # Remove unnecessary SQL files (keep only mssql.sql files)
     find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "mssql.sql" -delete
@@ -463,7 +475,7 @@ EOF
       find "$APIMGT_DIR" -type f -name "*.sql" ! -name "mssql.sql" -delete
     fi
     
-    log_success "Database scripts cleanup completed. Backup available at $BACKUP_DIR"
+    log_verbose "Database scripts cleanup completed. Backup available at $BACKUP_DIR"
   else
     log_warning "dbscripts directory not found, skipping cleanup"
   fi
@@ -471,18 +483,18 @@ EOF
   # Download JDBC driver only if not present
   JDBC_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
 
-  log_info "Checking MSSQL JDBC driver availability..."
+  log_verbose "Checking MSSQL JDBC driver availability..."
 
   # Create lib directory if it doesn't exist
   if [[ ! -d "$REPO_LIB_DIR" ]]; then
-    log_info "Creating lib directory: $REPO_LIB_DIR"
+    log_verbose "Creating lib directory: $REPO_LIB_DIR"
     mkdir -p "$REPO_LIB_DIR"
   fi
 
   # Check if JDBC driver already exists
   if [[ -f "$JDBC_PATH" ]]; then
-    log_success "MSSQL JDBC driver already exists at $JDBC_PATH"
-    log_info "Verifying driver file integrity..."
+    log_verbose "MSSQL JDBC driver already exists at $JDBC_PATH"
+    log_verbose "Verifying driver file integrity..."
     
     # Cross-platform file size check
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -492,22 +504,22 @@ EOF
     fi
     
     if [[ "$FILE_SIZE" -gt 1000000 ]]; then
-      log_success "JDBC driver file appears to be valid (size: $FILE_SIZE bytes)"
+      log_verbose "JDBC driver file appears to be valid (size: $FILE_SIZE bytes)"
     else
       log_warning "JDBC driver file seems corrupted or incomplete (size: $FILE_SIZE bytes)"
-      log_info "Removing corrupted file and re-downloading..."
+      log_verbose "Removing corrupted file and re-downloading..."
       rm -f "$JDBC_PATH"
     fi
   fi
 
   # Download JDBC driver if not present or corrupted
   if [[ ! -f "$JDBC_PATH" ]]; then
-    log_info "Downloading MSSQL JDBC driver from $JDBC_URL..."
+    log_info "Downloading MSSQL JDBC driver..."
     
     # Download to temporary location first using curl
     TEMP_DRIVER="/tmp/$JDBC_DRIVER"
     if curl -s -L -o "$TEMP_DRIVER" "$JDBC_URL"; then
-      log_success "JDBC driver downloaded successfully"
+      log_verbose "JDBC driver downloaded successfully"
       
       # Verify downloaded file
       if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -517,9 +529,9 @@ EOF
       fi
       
       if [[ "$TEMP_FILE_SIZE" -gt 1000000 ]]; then
-        log_info "Moving JDBC driver to $REPO_LIB_DIR..."
+        log_verbose "Moving JDBC driver to $REPO_LIB_DIR..."
         mv "$TEMP_DRIVER" "$JDBC_PATH"
-        log_success "MSSQL JDBC driver installed successfully at $JDBC_PATH"
+        log_success "MSSQL JDBC driver installed successfully"
       else
         log_error "Downloaded JDBC driver appears to be corrupted (size: $TEMP_FILE_SIZE bytes)"
         rm -f "$TEMP_DRIVER"
@@ -537,8 +549,10 @@ EOF
     
     # Wait a moment and check container status
     sleep 3
-    log_info "Checking container status..."
-    $DOCKER_COMPOSE_CMD ps
+    if [[ "$VERBOSE" == "true" ]]; then
+      log_verbose "Checking container status..."
+      $DOCKER_COMPOSE_CMD ps
+    fi
     
     # Initialize databases using direct container execution
     if ! initialize_databases; then
@@ -550,13 +564,13 @@ EOF
     
     # If container startup failed, still restore the backup if it exists
     if [[ -n "$BACKUP_DIR" ]] && [[ -d "$BACKUP_DIR" ]]; then
-      log_info "Restoring dbscripts directory from backup due to failure..."
+      log_verbose "Restoring dbscripts directory from backup due to failure..."
       if [[ -d "$DBSCRIPTS_DIR" ]]; then
         rm -rf "$DBSCRIPTS_DIR"
       fi
       cp -r "$BACKUP_DIR" "$DBSCRIPTS_DIR"
       rm -rf "$BACKUP_DIR"
-      log_success "dbscripts directory restored from backup"
+      log_verbose "dbscripts directory restored from backup"
     fi
     
     exit 1
@@ -569,24 +583,24 @@ EOF
 
   # Restore dbscripts directory from backup and cleanup
   if [[ -n "$BACKUP_DIR" ]] && [[ -d "$BACKUP_DIR" ]]; then
-    log_info "Restoring dbscripts directory from backup..."
+    log_verbose "Restoring dbscripts directory from backup..."
     
     # Remove the modified dbscripts directory
     if [[ -d "$DBSCRIPTS_DIR" ]]; then
       rm -rf "$DBSCRIPTS_DIR"
-      log_info "Removed modified dbscripts directory"
+      log_verbose "Removed modified dbscripts directory"
     fi
     
     # Restore from backup
     cp -r "$BACKUP_DIR" "$DBSCRIPTS_DIR"
-    log_success "dbscripts directory restored from backup"
+    log_verbose "dbscripts directory restored from backup"
     
     # Clean up backup directory
-    log_info "Cleaning up backup directory: $BACKUP_DIR"
+    log_verbose "Cleaning up backup directory: $BACKUP_DIR"
     rm -rf "$BACKUP_DIR"
-    log_success "Backup directory cleaned up"
+    log_verbose "Backup directory cleaned up"
     
-    log_info "dbscripts directory has been reset to its original state"
+    log_verbose "dbscripts directory has been reset to its original state"
   else
     log_warning "No backup directory found to restore from"
   fi

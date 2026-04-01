@@ -11,7 +11,7 @@ set -euo pipefail
 ##############################################
 
 # Script version
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 
 # Repository information
 REPO_OWNER="dakshina99"
@@ -20,11 +20,19 @@ REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}"
 BRANCH="main"
 
 # Supported database types
-SUPPORTED_DBS=("mysql" "postgresql" "oracle" "mssql" "db2")
+SUPPORTED_DBS=("mysql" "postgresql" "oracle" "mssql")
 
 # Database dump file paths (optional)
 APIM_DB_DUMP=""
 SHARED_DB_DUMP=""
+
+# Verbose flag
+VERBOSE=false
+for arg in "$@"; do
+  case "$arg" in
+    -v|--verbose) VERBOSE=true ;;
+  esac
+done
 
 ##############################################
 
@@ -250,7 +258,10 @@ setup_database() {
     log_info "   Running initialization script: $init_script"
     
     # Pass dump file paths to init script via environment variables
-    APIM_DB_DUMP="$APIM_DB_DUMP" SHARED_DB_DUMP="$SHARED_DB_DUMP" ./$init_script
+    # Forward -v flag if set
+    local verbose_flag=""
+    [[ "$VERBOSE" == "true" ]] && verbose_flag="-v"
+    APIM_DB_DUMP="$APIM_DB_DUMP" SHARED_DB_DUMP="$SHARED_DB_DUMP" ./$init_script $verbose_flag
     
     log_success "Database setup completed successfully."
 }
@@ -281,10 +292,6 @@ print_next_steps() {
             ;;
         "mssql")
             log_info "MSSQL ports: 1433 (apim_db), 1434 (shared_db)"
-            ;;
-        "db2")
-            log_info "DB2 ports: 50000 (apim_db), 50001 (shared_db)"
-            log_info "Note: DB2 containers may take several minutes to initialize"
             ;;
     esac
 }

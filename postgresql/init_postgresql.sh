@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+VERBOSE=false
+for arg in "$@"; do
+  case "$arg" in
+    -v|--verbose) VERBOSE=true ;;
+  esac
+done
+
 # This script uses native tools to avoid installing additional dependencies:
 # - docker compose plugin instead of standalone docker-compose when available
 
@@ -29,18 +36,22 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+log_verbose() {
+    [[ "$VERBOSE" == "true" ]] && echo -e "${BLUE}[INFO]${NC} $1" || true
+}
+
 ##############################################
 # Check for native tools instead of installing dependencies
 ##############################################
 check_dependencies() {
-  log_info "Checking for required native tools..."
+  log_verbose "Checking for required native tools..."
 
   # Check for curl (native on both macOS and Linux)
   if ! command -v curl &> /dev/null; then
     log_error "curl is not available. Please install curl or ensure it's in your PATH."
     exit 1
   else
-    log_success "curl is available"
+    log_verbose "curl is available"
   fi
 
   # Check for docker
@@ -48,15 +59,15 @@ check_dependencies() {
     log_error "Docker is not installed. Please install Docker first."
     exit 1
   else
-    log_success "Docker is available"
+    log_verbose "Docker is available"
   fi
 
   # Check for docker compose (prefer native docker compose plugin over standalone docker-compose)
   if docker compose version &> /dev/null; then
-    log_success "Docker Compose plugin is available (using native 'docker compose')"
+    log_verbose "Docker Compose plugin is available (using native 'docker compose')"
     COMPOSE_CMD="docker compose"
   elif command -v docker-compose &> /dev/null; then
-    log_success "docker-compose standalone is available"
+    log_verbose "docker-compose standalone is available"
     COMPOSE_CMD="docker-compose"
   else
     log_error "Neither 'docker compose' plugin nor 'docker-compose' standalone is available."
@@ -64,7 +75,7 @@ check_dependencies() {
     exit 1
   fi
 
-  log_success "Using native system utilities (find, sed, cp, mv)"
+  log_verbose "Using native system utilities (find, sed, cp, mv)"
 }
 
 ##############################################
@@ -72,6 +83,7 @@ check_dependencies() {
 ##############################################
 main() {
   log_info "Starting PostgreSQL database initialization process..."
+  [[ "$VERBOSE" == "false" ]] && log_info "(Run with -v for verbose output)"
 
   check_dependencies
 
@@ -83,7 +95,7 @@ main() {
   JDBC_DRIVER="postgresql-42.7.8.jar"
   BACKUP_DIR="dbscripts_backup_$(date +%Y%m%d_%H%M%S)"
 
-  log_info "Updating database configuration in $CONFIG_FILE..."
+  log_verbose "Updating database configuration in $CONFIG_FILE..."
 
   # Check if config file exists
   if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -91,7 +103,7 @@ main() {
     exit 1
   fi
 
-  log_info "Removing existing database configuration blocks..."
+  log_verbose "Removing existing database configuration blocks..."
 
   # Cross-platform sed handling (macOS vs Linux)
   if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -104,7 +116,7 @@ main() {
   sed "${SED_OPT[@]}" '/\[database.apim_db\]/,/^$/d' "$CONFIG_FILE"
   sed "${SED_OPT[@]}" '/\[database.shared_db\]/,/^$/d' "$CONFIG_FILE"
 
-  log_info "Adding PostgreSQL database configurations..."
+  log_verbose "Adding PostgreSQL database configurations..."
 
   # Append PostgreSQL configs
   cat <<EOF >> "$CONFIG_FILE"
@@ -128,71 +140,71 @@ EOF
 
   log_success "Database configuration updated successfully"
 
-  log_info "Processing database scripts cleanup..."
+  log_verbose "Processing database scripts cleanup..."
 
   # Backup dbscripts directory before cleaning
   if [[ -d "$DBSCRIPTS_DIR" ]]; then
-    log_info "Creating backup of dbscripts directory at $BACKUP_DIR..."
+    log_verbose "Creating backup of dbscripts directory at $BACKUP_DIR..."
     cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
-    log_success "Backup created successfully at $BACKUP_DIR"
+    log_verbose "Backup created successfully at $BACKUP_DIR"
 
     # Count files before cleanup
     TOTAL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "*.sql" | wc -l)
     POSTGRESQL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "postgresql.sql" | wc -l)
     FILES_TO_DELETE=$((TOTAL_SQL_FILES - POSTGRESQL_SQL_FILES))
 
-    log_info "Found $TOTAL_SQL_FILES SQL files total, keeping $POSTGRESQL_SQL_FILES postgresql.sql files"
-    log_info "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
+    log_verbose "Found $TOTAL_SQL_FILES SQL files total, keeping $POSTGRESQL_SQL_FILES postgresql.sql files"
+    log_verbose "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
 
     find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
     if [[ -d "$APIMGT_DIR" ]]; then
       find "$APIMGT_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
     fi
-    log_success "Database scripts cleanup completed. Backup available at $BACKUP_DIR"
+    log_verbose "Database scripts cleanup completed. Backup available at $BACKUP_DIR"
   else
     log_warning "dbscripts directory not found, skipping cleanup"
   fi
 
-  log_info "Checking PostgreSQL JDBC driver availability..."
+  log_verbose "Checking PostgreSQL JDBC driver availability..."
 
   # Check if lib directory exists
   if [[ ! -d "$REPO_LIB_DIR" ]]; then
-    log_info "Creating lib directory: $REPO_LIB_DIR"
+    log_verbose "Creating lib directory: $REPO_LIB_DIR"
     mkdir -p "$REPO_LIB_DIR"
   fi
 
   # Check if JDBC driver already exists
   JDBC_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
   if [[ -f "$JDBC_PATH" ]]; then
-    log_success "PostgreSQL JDBC driver already exists at $JDBC_PATH"
-    log_info "Verifying driver file integrity..."
+    log_verbose "PostgreSQL JDBC driver already exists at $JDBC_PATH"
+    log_verbose "Verifying driver file integrity..."
 
     # Check if file size is reasonable (should be > 500KB for PostgreSQL driver)
     FILE_SIZE=$(stat -c%s "$JDBC_PATH" 2>/dev/null || stat -f%z "$JDBC_PATH" 2>/dev/null || echo "0")
     if [[ "$FILE_SIZE" -gt 500000 ]]; then
-      log_success "JDBC driver file appears to be valid (size: $FILE_SIZE bytes)"
+      log_verbose "JDBC driver file appears to be valid (size: $FILE_SIZE bytes)"
     else
       log_warning "JDBC driver file seems corrupted or incomplete (size: $FILE_SIZE bytes)"
-      log_info "Removing corrupted file and re-downloading..."
+      log_verbose "Removing corrupted file and re-downloading..."
       rm -f "$JDBC_PATH"
     fi
   fi
 
   # Download JDBC driver if not present or corrupted
   if [[ ! -f "$JDBC_PATH" ]]; then
-    log_info "Downloading PostgreSQL JDBC driver from $JDBC_URL..."
+    log_info "Downloading PostgreSQL JDBC driver..."
 
     # Download to temporary location first
     TEMP_DRIVER="/tmp/$JDBC_DRIVER"
     if curl -fsSL -o "$TEMP_DRIVER" "$JDBC_URL"; then
-      log_success "JDBC driver downloaded successfully"
+      log_verbose "JDBC driver downloaded successfully"
 
       # Verify downloaded file
       TEMP_FILE_SIZE=$(stat -c%s "$TEMP_DRIVER" 2>/dev/null || stat -f%z "$TEMP_DRIVER" 2>/dev/null || echo "0")
       if [[ "$TEMP_FILE_SIZE" -gt 500000 ]]; then
-        log_info "Moving JDBC driver to $REPO_LIB_DIR..."
+        log_verbose "Moving JDBC driver to $REPO_LIB_DIR..."
         mv "$TEMP_DRIVER" "$JDBC_PATH"
-        log_success "PostgreSQL JDBC driver installed successfully at $JDBC_PATH"
+        log_success "PostgreSQL JDBC driver installed successfully"
       else
         log_error "Downloaded JDBC driver appears to be corrupted (size: $TEMP_FILE_SIZE bytes)"
         rm -f "$TEMP_DRIVER"
@@ -212,11 +224,13 @@ EOF
 
     # Wait a moment and check container status
     sleep 3
-    log_info "Checking container status..."
-    $COMPOSE_CMD ps
+    if [[ "$VERBOSE" == "true" ]]; then
+      log_verbose "Checking container status..."
+      $COMPOSE_CMD ps
+    fi
 
     # Wait for databases to be fully ready
-    log_info "Waiting for databases to be fully initialized..."
+    log_info "Waiting for databases to be ready..."
     sleep 10
 
     log_success "PostgreSQL database initialization process completed!"
@@ -263,19 +277,19 @@ EOF
 
     # Restore dbscripts directory from backup and cleanup
     if [[ -n "$BACKUP_DIR" ]] && [[ -d "$BACKUP_DIR" ]]; then
-      log_info "Restoring dbscripts directory from backup..."
+      log_verbose "Restoring dbscripts directory from backup..."
 
       # Remove the modified dbscripts directory
       if [[ -d "$DBSCRIPTS_DIR" ]]; then
         rm -rf "$DBSCRIPTS_DIR"
-        log_info "Removed modified dbscripts directory"
+        log_verbose "Removed modified dbscripts directory"
       fi
 
       # Restore from backup
       mv "$BACKUP_DIR" "$DBSCRIPTS_DIR"
-      log_success "dbscripts directory restored from backup"
+      log_verbose "dbscripts directory restored from backup"
 
-      log_info "dbscripts directory has been reset to its original state"
+      log_verbose "dbscripts directory has been reset to its original state"
     else
       log_warning "No backup directory found to restore from"
     fi
@@ -285,12 +299,12 @@ EOF
 
     # If container startup failed, still restore the backup if it exists
     if [[ -n "$BACKUP_DIR" ]] && [[ -d "$BACKUP_DIR" ]]; then
-      log_info "Restoring dbscripts directory from backup due to failure..."
+      log_verbose "Restoring dbscripts directory from backup due to failure..."
       if [[ -d "$DBSCRIPTS_DIR" ]]; then
         rm -rf "$DBSCRIPTS_DIR"
       fi
       mv "$BACKUP_DIR" "$DBSCRIPTS_DIR"
-      log_success "dbscripts directory restored from backup"
+      log_verbose "dbscripts directory restored from backup"
     fi
 
     exit 1
