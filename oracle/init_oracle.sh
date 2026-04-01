@@ -71,7 +71,7 @@ validationQuery = "SELECT 1 FROM DUAL"
 
 [database.shared_db]
 type = "oracle"
-url = "jdbc:oracle:thin:@localhost:1522/shared_db"
+url = "jdbc:oracle:thin:@localhost:1521/shared_db"
 username = "SHARED_DB"
 password = "sharedpass"
 driver = "oracle.jdbc.driver.OracleDriver"
@@ -109,20 +109,36 @@ log_success "Created directory: $USER_DIR"
 log_info "Writing APIM user creation script..."
 cat <<EOF > "$APIM_USER_FILE"
 -- APIM_USER
-CREATE USER APIM_DB IDENTIFIED BY apimpass QUOTA UNLIMITED ON USERS;
+CREATE USER APIM_DB IDENTIFIED BY apimpass QUOTA UNLIMITED ON USERS QUOTA UNLIMITED ON SYSTEM;
 GRANT CONNECT, RESOURCE TO APIM_DB;
 GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER, CREATE PROCEDURE TO APIM_DB;
+GRANT UNLIMITED TABLESPACE TO APIM_DB;
 EOF
 
 log_info "Writing SHARED user creation script..."
 cat <<EOF > "$SHARED_USER_FILE"
 -- SHARED_USER
-CREATE USER SHARED_DB IDENTIFIED BY sharedpass QUOTA UNLIMITED ON USERS;
+CREATE USER SHARED_DB IDENTIFIED BY sharedpass QUOTA UNLIMITED ON USERS QUOTA UNLIMITED ON SYSTEM;
 GRANT CONNECT, RESOURCE TO SHARED_DB;
 GRANT CREATE SESSION, CREATE TABLE, CREATE SEQUENCE, CREATE TRIGGER, CREATE PROCEDURE TO SHARED_DB;
+GRANT UNLIMITED TABLESPACE TO SHARED_DB;
 EOF
 
 log_success "Oracle user creation scripts written to $APIM_USER_FILE and $SHARED_USER_FILE"
+
+CREATE_SHARED_PDB_FILE="${USER_DIR}/create_shared_pdb.sql"
+log_info "Writing shared_db PDB creation script..."
+cat <<EOF > "$CREATE_SHARED_PDB_FILE"
+CREATE PLUGGABLE DATABASE shared_db
+  ADMIN USER pdb_admin IDENTIFIED BY apimpass
+  FILE_NAME_CONVERT = ('/opt/oracle/oradata/FREE/pdbseed/', '/opt/oracle/oradata/FREE/shared_db/');
+ALTER PLUGGABLE DATABASE shared_db OPEN;
+ALTER PLUGGABLE DATABASE shared_db SAVE STATE;
+ALTER SESSION SET CONTAINER = shared_db;
+CREATE TABLESPACE users DATAFILE '/opt/oracle/oradata/FREE/shared_db/users01.dbf' SIZE 50M AUTOEXTEND ON NEXT 10M MAXSIZE UNLIMITED;
+EXIT;
+EOF
+log_success "PDB creation script written to $CREATE_SHARED_PDB_FILE"
 
 log_info "Managing Oracle JDBC driver..."
 REPO_LIB_DIR="repository/components/lib"
@@ -159,10 +175,23 @@ cat <<'EOF' > wait-and-run-apim.sh
 #!/bin/bash
 set -e
 
+echo "Creating shared_db PDB..."
+docker exec -i oracle_db_container sqlplus -s "sys/apimpass@//localhost:1521/FREE AS SYSDBA" <<SQLEOF
+@/scripts/user/create_shared_pdb.sql
+EXIT;
+SQLEOF
+
 echo "Running APIM user script..."
-docker exec -i apim_db_container_oracle bash -c "echo -e '@/scripts/user/apim_user.sql\nEXIT;' | sqlplus -s sys/apimpass@//apim_db_container_oracle:1521/apim_db as sysdba"
+docker exec -i oracle_db_container sqlplus -s "sys/apimpass@//localhost:1521/apim_db AS SYSDBA" <<SQLEOF
+@/scripts/user/apim_user.sql
+EXIT;
+SQLEOF
+
 echo "Running APIM DB script..."
-docker exec -it apim_db_container_oracle bash -c "echo -e '@/scripts/apimgt/oracle.sql\nEXIT;' | sqlplus -s APIM_DB/apimpass@//apim_db_container_oracle:1521/apim_db"
+docker exec -i oracle_db_container sqlplus -s "APIM_DB/apimpass@//localhost:1521/apim_db" <<SQLEOF
+@/scripts/apimgt/oracle.sql
+EXIT;
+SQLEOF
 
 echo "APIM database setup completed."
 EOF
@@ -176,9 +205,16 @@ cat <<'EOF' > wait-and-run-shared.sh
 set -e
 
 echo "Running SHARED user script..."
-docker exec -it shared_db_container_oracle bash -c "echo -e '@/scripts/user/shared_user.sql\nEXIT;' | sqlplus -s sys/sharedpass@//shared_db_container_oracle:1521/shared_db as sysdba"
+docker exec -i oracle_db_container sqlplus -s "sys/apimpass@//localhost:1521/shared_db AS SYSDBA" <<SQLEOF
+@/scripts/user/shared_user.sql
+EXIT;
+SQLEOF
+
 echo "Running SHARED DB script..."
-docker exec -it shared_db_container_oracle bash -c "echo -e '@/scripts/oracle.sql\nEXIT;' | sqlplus -s SHARED_DB/sharedpass@//shared_db_container_oracle:1521/shared_db"
+docker exec -i oracle_db_container sqlplus -s "SHARED_DB/sharedpass@//localhost:1521/shared_db" <<SQLEOF
+@/scripts/oracle.sql
+EXIT;
+SQLEOF
 
 echo "SHARED database setup completed."
 EOF
@@ -187,6 +223,13 @@ chmod +x wait-and-run-shared.sh
 log_success "Created executable script: wait-and-run-shared.sh"
 
 log_info "Starting Docker containers..."
+log_info "Cleaning up any existing Oracle containers..."
+for container in apim_db_container_oracle shared_db_container_oracle oracle_db_container; do
+  if docker ps -a --format '{{.Names}}' | grep -q "^${container}$" 2>/dev/null; then
+    log_info "Removing existing container: $container"
+    docker rm -f "$container" 2>/dev/null || true
+  fi
+done
 log_info "Running docker compose up -d..."
 docker compose -f docker-compose.yaml up -d
 
@@ -207,8 +250,7 @@ wait_for_oracle() {
   log_error "$container did not become ready in time."
   exit 1
 }
-wait_for_oracle apim_db_container_oracle
-wait_for_oracle shared_db_container_oracle
+wait_for_oracle oracle_db_container
 
 log_info "Executing database setup scripts..."
 log_info "Setting up APIM database..."
@@ -232,23 +274,23 @@ fi
 log_info "======================================"
 log_success "Oracle Setup Complete!"
 log_info "======================================"
-log_success "Oracle containers and user creation completed successfully."
+log_success "Oracle container and user creation completed successfully."
 log_info "Summary:"
-log_info "   - Oracle containers are running"
+log_info "   - Single Oracle container running (2 PDBs: apim_db and shared_db)"
 log_info "   - APIM database connection details:"
 log_info "       Host: localhost"
 log_info "       Port: 1521"
-log_info "       SID: apim_db"
+log_info "       Service: apim_db"
 log_info "       Username: APIM_DB"
 log_info "       Password: apimpass"
-log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1521/XE"
+log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1521/apim_db"
 log_info "   - SHARED database connection details:"
 log_info "       Host: localhost"
-log_info "       Port: 1522"
-log_info "       SID: shared_db"
+log_info "       Port: 1521"
+log_info "       Service: shared_db"
 log_info "       Username: SHARED_DB"
 log_info "       Password: sharedpass"
-log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1522/shared_db"
+log_info "       JDBC URL: jdbc:oracle:thin:@localhost:1521/shared_db"
 log_info "   - JDBC driver installed in $REPO_LIB_DIR"
 log_info "   - Database configurations updated in $CONFIG_FILE"
 log_info "   - dbscripts directory restored to original state"

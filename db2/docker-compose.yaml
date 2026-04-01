@@ -3,7 +3,6 @@ version: "3.8"
 services:
   apim_db:
     image: ibmcom/db2-amd64
-    # image: ibmcom/db2-amd64
     container_name: apim_db_container_db2
     platform: linux/amd64
     privileged: true
@@ -16,10 +15,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./dbscripts:/dbscripts:ro
-  
+
   shared_db:
     image: ibmcom/db2-amd64
-    # image: ibmcom/db2-amd64
     container_name: shared_db_container_db2
     platform: linux/amd64
     privileged: true

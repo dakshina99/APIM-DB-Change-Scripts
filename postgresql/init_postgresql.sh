@@ -3,7 +3,6 @@
 set -euo pipefail
 
 # This script uses native tools to avoid installing additional dependencies:
-# - curl instead of wget (pre-installed on macOS and most Linux distributions)
 # - docker compose plugin instead of standalone docker-compose when available
 
 # Colors for better log visibility
@@ -41,7 +40,7 @@ check_dependencies() {
     log_error "curl is not available. Please install curl or ensure it's in your PATH."
     exit 1
   else
-    log_success "curl is available (using native tool instead of wget)"
+    log_success "curl is available"
   fi
 
   # Check for docker
@@ -73,7 +72,7 @@ check_dependencies() {
 ##############################################
 main() {
   log_info "Starting PostgreSQL database initialization process..."
-  
+
   check_dependencies
 
   CONFIG_FILE="repository/conf/deployment.toml"
@@ -93,7 +92,7 @@ main() {
   fi
 
   log_info "Removing existing database configuration blocks..."
-  
+
   # Cross-platform sed handling (macOS vs Linux)
   if [[ "$OSTYPE" == "darwin"* ]]; then
     SED_OPT=(-i '')
@@ -106,7 +105,7 @@ main() {
   sed "${SED_OPT[@]}" '/\[database.shared_db\]/,/^$/d' "$CONFIG_FILE"
 
   log_info "Adding PostgreSQL database configurations..."
-  
+
   # Append PostgreSQL configs
   cat <<EOF >> "$CONFIG_FILE"
 
@@ -130,21 +129,21 @@ EOF
   log_success "Database configuration updated successfully"
 
   log_info "Processing database scripts cleanup..."
-  
+
   # Backup dbscripts directory before cleaning
   if [[ -d "$DBSCRIPTS_DIR" ]]; then
     log_info "Creating backup of dbscripts directory at $BACKUP_DIR..."
     cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
     log_success "Backup created successfully at $BACKUP_DIR"
-    
+
     # Count files before cleanup
     TOTAL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "*.sql" | wc -l)
     POSTGRESQL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "postgresql.sql" | wc -l)
     FILES_TO_DELETE=$((TOTAL_SQL_FILES - POSTGRESQL_SQL_FILES))
-    
+
     log_info "Found $TOTAL_SQL_FILES SQL files total, keeping $POSTGRESQL_SQL_FILES postgresql.sql files"
     log_info "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
-    
+
     find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
     if [[ -d "$APIMGT_DIR" ]]; then
       find "$APIMGT_DIR" -type f -name "*.sql" ! -name "postgresql.sql" -delete
@@ -155,7 +154,7 @@ EOF
   fi
 
   log_info "Checking PostgreSQL JDBC driver availability..."
-  
+
   # Check if lib directory exists
   if [[ ! -d "$REPO_LIB_DIR" ]]; then
     log_info "Creating lib directory: $REPO_LIB_DIR"
@@ -167,7 +166,7 @@ EOF
   if [[ -f "$JDBC_PATH" ]]; then
     log_success "PostgreSQL JDBC driver already exists at $JDBC_PATH"
     log_info "Verifying driver file integrity..."
-    
+
     # Check if file size is reasonable (should be > 500KB for PostgreSQL driver)
     FILE_SIZE=$(stat -c%s "$JDBC_PATH" 2>/dev/null || stat -f%z "$JDBC_PATH" 2>/dev/null || echo "0")
     if [[ "$FILE_SIZE" -gt 500000 ]]; then
@@ -178,16 +177,16 @@ EOF
       rm -f "$JDBC_PATH"
     fi
   fi
-  
+
   # Download JDBC driver if not present or corrupted
   if [[ ! -f "$JDBC_PATH" ]]; then
     log_info "Downloading PostgreSQL JDBC driver from $JDBC_URL..."
-    
+
     # Download to temporary location first
     TEMP_DRIVER="/tmp/$JDBC_DRIVER"
     if curl -fsSL -o "$TEMP_DRIVER" "$JDBC_URL"; then
       log_success "JDBC driver downloaded successfully"
-      
+
       # Verify downloaded file
       TEMP_FILE_SIZE=$(stat -c%s "$TEMP_DRIVER" 2>/dev/null || stat -f%z "$TEMP_DRIVER" 2>/dev/null || echo "0")
       if [[ "$TEMP_FILE_SIZE" -gt 500000 ]]; then
@@ -210,25 +209,25 @@ EOF
 
   if $COMPOSE_CMD up -d; then
     log_success "PostgreSQL Docker containers started successfully"
-    
+
     # Wait a moment and check container status
     sleep 3
     log_info "Checking container status..."
     $COMPOSE_CMD ps
-    
+
     # Wait for databases to be fully ready
     log_info "Waiting for databases to be fully initialized..."
     sleep 10
-    
+
     log_success "PostgreSQL database initialization process completed!"
-    
+
     # Display comprehensive database connection information
     echo
     log_info "==============================================="
     log_info "    DATABASE CONNECTION INFORMATION"
     log_info "==============================================="
     echo
-    
+
     log_info "APIM Database Connection Details:"
     log_info "  Host: localhost"
     log_info "  Port: 5432"
@@ -237,7 +236,7 @@ EOF
     log_info "  Password: apimpass"
     log_info "  JDBC URL: jdbc:postgresql://localhost:5432/apim_db"
     echo
-    
+
     log_info "Shared Database Connection Details:"
     log_info "  Host: localhost"
     log_info "  Port: 5433"
@@ -246,7 +245,7 @@ EOF
     log_info "  Password: sharedpass"
     log_info "  JDBC URL: jdbc:postgresql://localhost:5433/shared_db"
     echo
-    
+
     log_info "Database Viewer Configuration (pgAdmin, DBeaver, etc.):"
     log_info "  Connection Type: PostgreSQL"
     log_info "  Server Host: localhost"
@@ -254,7 +253,7 @@ EOF
     log_info "  Authentication: Username/Password"
     log_info "  SSL Mode: Prefer (or disable for local development)"
     echo
-    
+
     log_info "Container Management:"
     log_info "  View containers: $COMPOSE_CMD ps"
     log_info "  Stop containers: $COMPOSE_CMD down"
@@ -265,25 +264,25 @@ EOF
     # Restore dbscripts directory from backup and cleanup
     if [[ -n "$BACKUP_DIR" ]] && [[ -d "$BACKUP_DIR" ]]; then
       log_info "Restoring dbscripts directory from backup..."
-      
+
       # Remove the modified dbscripts directory
       if [[ -d "$DBSCRIPTS_DIR" ]]; then
         rm -rf "$DBSCRIPTS_DIR"
         log_info "Removed modified dbscripts directory"
       fi
-      
+
       # Restore from backup
       mv "$BACKUP_DIR" "$DBSCRIPTS_DIR"
       log_success "dbscripts directory restored from backup"
-      
+
       log_info "dbscripts directory has been reset to its original state"
     else
       log_warning "No backup directory found to restore from"
     fi
-    
+
   else
     log_error "Failed to start PostgreSQL Docker containers"
-    
+
     # If container startup failed, still restore the backup if it exists
     if [[ -n "$BACKUP_DIR" ]] && [[ -d "$BACKUP_DIR" ]]; then
       log_info "Restoring dbscripts directory from backup due to failure..."
@@ -293,7 +292,7 @@ EOF
       mv "$BACKUP_DIR" "$DBSCRIPTS_DIR"
       log_success "dbscripts directory restored from backup"
     fi
-    
+
     exit 1
   fi
 }

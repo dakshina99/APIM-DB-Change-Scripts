@@ -3,7 +3,6 @@
 set -e
 
 # This script use    log_error "curl    log_success "docker-compose standalone is available"is not available. Please install curl or ensure it's in your PATH." native tools to avoid installing additional dependencies:
-# - curl instead of wget (pre-installed on macOS and most Linux distributions)
 # - docker compose plugin instead of standalone docker-compose when available
 
 # Colors for better log visibility
@@ -49,7 +48,7 @@ check_dependencies() {
     log_error "� curl is not available. Please install curl or ensure it's in your PATH."
     exit 1
   else
-    log_success "curl is available (using native tool instead of wget)"
+    log_success "curl is available"
   fi
 
   # Check for docker
@@ -79,20 +78,20 @@ wait_for_mysql() {
     local container_name="$1"
     local max_attempts=30
     local attempt=1
-    
+
     log_info "Waiting for MySQL container '$container_name' to be ready..."
-    
+
     while [ $attempt -le $max_attempts ]; do
         if docker exec "$container_name" mysqladmin ping -h localhost -u root -prootpass --silent &>/dev/null; then
             log_success "MySQL container '$container_name' is ready!"
             return 0
         fi
-        
+
         log_info "  Attempt $attempt/$max_attempts - MySQL not ready yet, waiting..."
         sleep 2
         attempt=$((attempt + 1))
     done
-    
+
     log_error "MySQL container '$container_name' failed to become ready after $max_attempts attempts"
     return 1
 }
@@ -103,24 +102,24 @@ import_dump() {
     local container_name="$1"
     local database_name="$2"
     local dump_file="$3"
-    
+
     # Use root credentials for dump import (application users may lack required privileges)
     local root_user="root"
     local root_pass="rootpass"
-    
+
     if [[ -z "$dump_file" ]]; then
         log_info "No dump file provided for $database_name, skipping import"
         return 0
     fi
-    
+
     if [[ ! -f "$dump_file" ]]; then
         log_error "Dump file not found: $dump_file"
         return 1
     fi
-    
+
     log_info "Importing dump into $database_name from $dump_file..."
     log_info "  Using root credentials for proper privileges"
-    
+
     # Determine if the file is compressed
     if [[ "$dump_file" == *.gz ]]; then
         log_info "  Detected gzipped dump file, decompressing during import..."
@@ -199,26 +198,26 @@ if [ "$USING_DUMPS" = false ]; then
         # Create backup directory with timestamp
         BACKUP_TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
         BACKUP_DIR="${DBSCRIPTS_DIR}_backup_${BACKUP_TIMESTAMP}"
-        
+
         log_info "Creating backup of dbscripts directory at $BACKUP_DIR..."
         cp -r "$DBSCRIPTS_DIR" "$BACKUP_DIR"
         log_success "Backup created successfully at $BACKUP_DIR"
-        
+
         # Count files before cleanup
         TOTAL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "*.sql" | wc -l)
         MYSQL_SQL_FILES=$(find "$DBSCRIPTS_DIR" -type f -name "mysql.sql" | wc -l)
         FILES_TO_DELETE=$((TOTAL_SQL_FILES - MYSQL_SQL_FILES))
-        
+
         log_info "Found $TOTAL_SQL_FILES SQL files total, keeping $MYSQL_SQL_FILES mysql.sql files"
         log_info "Cleaning up $FILES_TO_DELETE unnecessary SQL files..."
-        
+
         # Remove unnecessary SQL files (keep only mysql.sql files)
         find "$DBSCRIPTS_DIR" -type f -name "*.sql" ! -name "mysql.sql" -delete
-        
+
         if [ -d "$APIMGT_DIR" ]; then
             find "$APIMGT_DIR" -type f -name "*.sql" ! -name "mysql.sql" -delete
         fi
-        
+
         log_success "Database scripts cleanup completed. Backup available at $BACKUP_DIR"
     else
         log_warning "dbscripts directory not found, skipping cleanup"
@@ -236,7 +235,7 @@ JDBC_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
 # Modify docker-compose if using dumps (to skip auto-initialization from scripts)
 if [ "$USING_DUMPS" = true ]; then
     log_info "Configuring Docker Compose for dump import mode..."
-    
+
     # Create a modified docker-compose without volume mounts for init scripts
     cat > docker-compose.yaml <<'DUMPEOF'
 version: '3.8'
@@ -280,7 +279,7 @@ fi
 if [ -f "$JDBC_PATH" ]; then
     log_success "MySQL JDBC driver already exists at $JDBC_PATH"
     log_info "Verifying driver file integrity..."
-    
+
     # Check if file size is reasonable (should be > 1MB for MySQL connector)
     FILE_SIZE=$(stat -f%z "$JDBC_PATH" 2>/dev/null || echo "0")
     if [ "$FILE_SIZE" -gt 1000000 ]; then
@@ -295,12 +294,12 @@ fi
 # Download JDBC driver if not present or corrupted
 if [ ! -f "$JDBC_PATH" ]; then
     log_info "Downloading MySQL JDBC driver from $JDBC_URL..."
-    
+
     # Download to temporary location first
     TEMP_DRIVER="/tmp/$JDBC_DRIVER"
     if curl -L -o "$TEMP_DRIVER" "$JDBC_URL"; then
         log_success "JDBC driver downloaded successfully"
-        
+
         # Verify downloaded file
         TEMP_FILE_SIZE=$(stat -f%z "$TEMP_DRIVER" 2>/dev/null || echo "0")
         if [ "$TEMP_FILE_SIZE" -gt 1000000 ]; then
@@ -323,40 +322,40 @@ log_info "Starting MySQL Docker containers..."
 
 if $DOCKER_COMPOSE_CMD up -d; then
     log_success "MySQL Docker containers started successfully"
-    
+
     # Wait a moment and check container status
     sleep 3
     log_info "Checking container status..."
     $DOCKER_COMPOSE_CMD ps
-    
+
     # Wait for databases to be fully ready
     log_info "Waiting for databases to be fully initialized..."
-    
+
     # Wait for MySQL containers to be ready (proper health check)
     wait_for_mysql "apim_db_container_mysql"
     wait_for_mysql "shared_db_container_mysql"
-    
+
     # Import database dumps if provided
     if [ "$USING_DUMPS" = true ]; then
         log_info "==============================================="
         log_info "    IMPORTING DATABASE DUMPS"
         log_info "==============================================="
         echo
-        
+
         IMPORT_FAILED=false
-        
+
         if [[ -n "$APIM_DB_DUMP" ]]; then
             if ! import_dump "apim_db_container_mysql" "apim_db" "$APIM_DB_DUMP"; then
                 IMPORT_FAILED=true
             fi
         fi
-        
+
         if [[ -n "$SHARED_DB_DUMP" ]]; then
             if ! import_dump "shared_db_container_mysql" "shared_db" "$SHARED_DB_DUMP"; then
                 IMPORT_FAILED=true
             fi
         fi
-        
+
         if [ "$IMPORT_FAILED" = true ]; then
             log_warning "Some dump imports failed. Please check the logs above."
         else
@@ -364,16 +363,16 @@ if $DOCKER_COMPOSE_CMD up -d; then
         fi
         echo
     fi
-    
+
     log_success "MySQL database initialization process completed!"
-    
+
     # Display comprehensive database connection information
     echo
     log_info "==============================================="
     log_info "    DATABASE CONNECTION INFORMATION"
     log_info "==============================================="
     echo
-    
+
     if [ "$USING_DUMPS" = true ]; then
         log_info "Mode: Database Dump Import"
         if [[ -n "$APIM_DB_DUMP" ]]; then
@@ -387,7 +386,7 @@ if $DOCKER_COMPOSE_CMD up -d; then
         log_info "Mode: Default Initialization Scripts"
         echo
     fi
-    
+
     log_info "APIM Database Connection Details:"
     log_info "  Host: localhost"
     log_info "  Port: 3306"
@@ -396,7 +395,7 @@ if $DOCKER_COMPOSE_CMD up -d; then
     log_info "  Password: apimpass"
     log_info "  JDBC URL: jdbc:mysql://localhost:3306/apim_db?allowPublicKeyRetrieval=true&useSSL=false"
     echo
-    
+
     log_info "Shared Database Connection Details:"
     log_info "  Host: localhost"
     log_info "  Port: 3307"
@@ -405,7 +404,7 @@ if $DOCKER_COMPOSE_CMD up -d; then
     log_info "  Password: sharedpass"
     log_info "  JDBC URL: jdbc:mysql://localhost:3307/shared_db?allowPublicKeyRetrieval=true&useSSL=false"
     echo
-    
+
     log_info "Database Viewer Configuration (MySQL Workbench, DBeaver, etc.):"
     log_info "  Connection Type: MySQL"
     log_info "  Server Host: localhost"
@@ -413,7 +412,7 @@ if $DOCKER_COMPOSE_CMD up -d; then
     log_info "  Authentication: Standard (Username/Password)"
     log_info "  SSL: Disabled"
     echo
-    
+
     log_info "Container Management:"
     log_info "  View containers: $DOCKER_COMPOSE_CMD ps"
     log_info "  Stop containers: $DOCKER_COMPOSE_CMD down"
@@ -430,11 +429,11 @@ if $DOCKER_COMPOSE_CMD up -d; then
             rm -rf "$DBSCRIPTS_DIR"
             log_info "Removed modified dbscripts directory"
         fi
-        
+
         # Restore from backup
         cp -r "$BACKUP_DIR" "$DBSCRIPTS_DIR"
         log_success "dbscripts directory restored from backup"
-        
+
         # Clean up backup directory
         log_info "Cleaning up backup directory: $BACKUP_DIR"
         rm -rf "$BACKUP_DIR"
@@ -444,7 +443,7 @@ if $DOCKER_COMPOSE_CMD up -d; then
     else
         log_warning "No backup directory found to restore from"
     fi
-    
+
 else
     log_error "Failed to start MySQL Docker containers"
 
@@ -458,6 +457,6 @@ else
         rm -rf "$BACKUP_DIR"
         log_success "dbscripts directory restored from backup"
     fi
-    
+
     exit 1
 fi
