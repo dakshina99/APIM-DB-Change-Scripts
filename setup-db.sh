@@ -197,9 +197,9 @@ validate_dump_file() {
     fi
     
     # Check file extension
-    if [[ ! "$dump_path" =~ \.(sql|sql\.gz|dump)$ ]]; then
+    if [[ ! "$dump_path" =~ \.(sql|sql\.gz|dump|bak)$ ]]; then
         log_warning "Dump file for $db_name has unusual extension: $dump_path"
-        log_warning "Expected .sql, .sql.gz, or .dump extension"
+        log_warning "Expected .sql, .sql.gz, .dump, or .bak extension"
     fi
     
     log_success "Dump file validated for $db_name: $dump_path"
@@ -262,6 +262,17 @@ setup_database() {
     local verbose_flag=""
     [[ "$VERBOSE" == "true" ]] && verbose_flag="-v"
     APIM_DB_DUMP="$APIM_DB_DUMP" SHARED_DB_DUMP="$SHARED_DB_DUMP" ./$init_script $verbose_flag
+
+    # Run restore script if dump files were provided
+    if [[ -n "$APIM_DB_DUMP" || -n "$SHARED_DB_DUMP" ]]; then
+        local restore_script="restore_${db_type}.sh"
+        if [[ -f "$restore_script" ]]; then
+            log_info "Running dump restore via $restore_script..."
+            APIM_DB_DUMP="$APIM_DB_DUMP" SHARED_DB_DUMP="$SHARED_DB_DUMP" ./$restore_script $verbose_flag
+        else
+            log_warning "Restore script '$restore_script' not found. Dumps were not imported."
+        fi
+    fi
     
     log_success "Database setup completed successfully."
 }
@@ -318,8 +329,10 @@ main() {
     validate_apim_home
     check_dependencies
     
-    # Prompt for optional dump files
-    prompt_for_dumps
+    # Prompt for optional dump files (only for DB types that support dump restore)
+    if [[ "$db_type" == "mysql" || "$db_type" == "postgresql" || "$db_type" == "mssql" ]]; then
+        prompt_for_dumps
+    fi
     
     # Download and setup
     download_database_files "$db_type"
