@@ -147,8 +147,8 @@ log_verbose "PDB creation script written to $CREATE_SHARED_PDB_FILE"
 
 log_verbose "Managing Oracle JDBC driver..."
 REPO_LIB_DIR="repository/components/lib"
-JDBC_URL="https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.7.0.25.01/ojdbc11-23.7.0.25.01.jar"
-JDBC_DRIVER="ojdbc11-23.7.0.25.01.jar"
+JDBC_URL="https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc10/19.30.0.0/ojdbc10-19.30.0.0.jar"
+JDBC_DRIVER="ojdbc10-19.30.0.0.jar"
 JDBC_DRIVER_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
 
 # Create lib directory if it doesn't exist

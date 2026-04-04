@@ -91,12 +91,17 @@ import_dump() {
         return 1
     fi
 
+    log_info "Dropping and recreating '$database_name' before restore..."
+    docker exec "$container_name" mysql -h 127.0.0.1 -u "$root_user" -p"$root_pass" \
+        -e "DROP DATABASE IF EXISTS \`${database_name}\`; CREATE DATABASE \`${database_name}\`;"
+    log_verbose "  Database '$database_name' recreated."
+
     log_info "Importing dump into '$database_name' from: $(basename "$dump_file")"
     log_verbose "  Container: $container_name | Credentials: $root_user"
 
     if [[ "$dump_file" == *.gz ]]; then
         log_verbose "  Detected gzip archive — decompressing on the fly..."
-        if gunzip -c "$dump_file" | docker exec -i "$container_name" mysql -u "$root_user" -p"$root_pass" "$database_name"; then
+        if gunzip -c "$dump_file" | docker exec -i "$container_name" mysql -h 127.0.0.1 -u "$root_user" -p"$root_pass" "$database_name"; then
             log_success "Dump imported successfully into '$database_name'."
             return 0
         else
@@ -104,7 +109,7 @@ import_dump() {
             return 1
         fi
     else
-        if docker exec -i "$container_name" mysql -u "$root_user" -p"$root_pass" "$database_name" < "$dump_file"; then
+        if docker exec -i "$container_name" mysql -h 127.0.0.1 -u "$root_user" -p"$root_pass" "$database_name" < "$dump_file"; then
             log_success "Dump imported successfully into '$database_name'."
             return 0
         else
