@@ -387,11 +387,65 @@ display_connection_info() {
 ##############################################
 # Main Execution
 ##############################################
+
+##############################################
+# Dump file prompting
+# Set APIM_DB_DUMP / SHARED_DB_DUMP env vars
+# to skip interactive prompt.
+##############################################
+prompt_for_dumps() {
+    APIM_DB_DUMP="${APIM_DB_DUMP:-}"
+    SHARED_DB_DUMP="${SHARED_DB_DUMP:-}"
+
+    if [[ -n "$APIM_DB_DUMP" && -n "$SHARED_DB_DUMP" ]]; then
+        log_info "Using dump files from environment variables."
+        return
+    fi
+
+    echo ""
+    log_info "--------------------------------------------------"
+    log_info "Database Dump Import (Optional)"
+    log_info "--------------------------------------------------"
+    log_info "You can optionally provide database dump files to import."
+    log_info "Supported formats: .sql, .sql.gz, .bak (SQL Server native backup)"
+    log_info "If not provided, default initialization scripts will be used."
+    log_info "Press Enter to skip if you don't have dump files."
+    echo ""
+
+    if [[ -z "$APIM_DB_DUMP" ]]; then
+        read -rp "Path to APIM DB dump file (or press Enter to skip): " APIM_DB_DUMP
+    fi
+    if [[ -n "$APIM_DB_DUMP" ]]; then
+        APIM_DB_DUMP="${APIM_DB_DUMP/#\~/$HOME}"
+        [[ "$APIM_DB_DUMP" != /* ]] && APIM_DB_DUMP="$(pwd)/$APIM_DB_DUMP"
+        if [[ ! -f "$APIM_DB_DUMP" ]]; then
+            log_error "APIM DB dump file not found: $APIM_DB_DUMP"; exit 1
+        fi
+        log_success "APIM DB dump: $APIM_DB_DUMP"
+    fi
+
+    if [[ -z "$SHARED_DB_DUMP" ]]; then
+        read -rp "Path to Shared DB dump file (or press Enter to skip): " SHARED_DB_DUMP
+    fi
+    if [[ -n "$SHARED_DB_DUMP" ]]; then
+        SHARED_DB_DUMP="${SHARED_DB_DUMP/#\~/$HOME}"
+        [[ "$SHARED_DB_DUMP" != /* ]] && SHARED_DB_DUMP="$(pwd)/$SHARED_DB_DUMP"
+        if [[ ! -f "$SHARED_DB_DUMP" ]]; then
+            log_error "Shared DB dump file not found: $SHARED_DB_DUMP"; exit 1
+        fi
+        log_success "Shared DB dump: $SHARED_DB_DUMP"
+    fi
+    echo ""
+}
+
 main() {
   log_info "Starting MSSQL database initialization process..."
   [[ "$VERBOSE" == "false" ]] && log_info "(Run with -v for verbose output)"
   
   check_dependencies
+
+  # Prompt for dump file paths (interactive or via env vars)
+  prompt_for_dumps
 
   CONFIG_FILE="repository/conf/deployment.toml"
   DBSCRIPTS_DIR="dbscripts"
@@ -577,7 +631,115 @@ EOF
   fi
 
   log_success "MSSQL database initialization process completed!"
-  
+
+  # Inline dump restore if dump files were provided
+  if [[ -n "$APIM_DB_DUMP" || -n "$SHARED_DB_DUMP" ]]; then
+    log_info "======================================"
+    log_info "MSSQL Dump Restore"
+    log_info "======================================"
+
+    local ms_apim_container="apim_db_container_mssql"
+    local ms_apim_port="1433"
+    local ms_shared_container="shared_db_container_mssql"
+    local ms_shared_port="1434"
+    local ms_sa_user="SA"
+    local ms_sa_pass="RootPass123!"
+    local dump_failed=false
+
+    # Helper: run sqlcmd with a file (platform-aware)
+    ms_run_sqlcmd_file() {
+      local ctr="$1" port="$2" db="$3" sql_file="$4"
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sqlcmd -S "localhost,$port" -U "$ms_sa_user" -P "$ms_sa_pass" -d "$db" -i "$sql_file"
+      else
+        local rpath="/tmp/mssql_restore_$$.sql"
+        docker cp "$sql_file" "$ctr:$rpath"
+        docker exec "$ctr" /opt/mssql-tools/bin/sqlcmd \
+          -S localhost -U "$ms_sa_user" -P "$ms_sa_pass" -d "$db" -i "$rpath"
+        docker exec "$ctr" rm -f "$rpath"
+      fi
+    }
+
+    # Helper: restore a .bak file
+    ms_restore_bak() {
+      local ctr="$1" db="$2" port="$3" bak_file="$4"
+      local remote_bak="/tmp/mssql_restore_$$.bak"
+      docker cp "$bak_file" "$ctr:$remote_bak"
+
+      local filelist
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        filelist=$(sqlcmd -S "localhost,$port" -U "$ms_sa_user" -P "$ms_sa_pass" \
+          -h -1 -s "|" -W \
+          -Q "RESTORE FILELISTONLY FROM DISK = '$remote_bak'" 2>/dev/null)
+      else
+        filelist=$(docker exec "$ctr" /opt/mssql-tools/bin/sqlcmd \
+          -S localhost -U "$ms_sa_user" -P "$ms_sa_pass" \
+          -h -1 -s "|" -W \
+          -Q "RESTORE FILELISTONLY FROM DISK = '$remote_bak'" 2>/dev/null)
+      fi
+
+      local data_logical log_logical
+      data_logical=$(echo "$filelist" | awk -F'|' 'NF>2 && $3~/^ *D *$/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1; exit}')
+      log_logical=$(echo "$filelist"  | awk -F'|' 'NF>2 && $3~/^ *L *$/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1; exit}')
+
+      if [[ -z "$data_logical" || -z "$log_logical" ]]; then
+        docker exec "$ctr" rm -f "$remote_bak" 2>/dev/null || true
+        log_error "Could not parse logical file names from backup."
+        return 1
+      fi
+
+      local restore_sql="RESTORE DATABASE [$db] FROM DISK = '$remote_bak' WITH REPLACE, MOVE '$data_logical' TO '/var/opt/mssql/data/${db}.mdf', MOVE '$log_logical' TO '/var/opt/mssql/data/${db}_log.ldf'"
+      local ok=false
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        sqlcmd -S "localhost,$port" -U "$ms_sa_user" -P "$ms_sa_pass" -Q "$restore_sql" && ok=true || true
+      else
+        docker exec "$ctr" /opt/mssql-tools/bin/sqlcmd \
+          -S localhost -U "$ms_sa_user" -P "$ms_sa_pass" -Q "$restore_sql" && ok=true || true
+      fi
+      docker exec "$ctr" rm -f "$remote_bak" 2>/dev/null || true
+      [[ "$ok" == "true" ]]
+    }
+
+    # Helper: import a dump into an MSSQL database
+    ms_import_dump() {
+      local ctr="$1" db="$2" port="$3" dump="$4"
+      [[ -z "$dump" ]] && return 0
+      if [[ ! -f "$dump" ]]; then
+        log_error "Dump file not found: $dump"; return 1
+      fi
+      log_info "Importing dump into '$db' from: $(basename "$dump")"
+      if [[ "$dump" == *.bak ]]; then
+        if ms_restore_bak "$ctr" "$db" "$port" "$dump"; then
+          log_success "Dump imported successfully into '$db'."; return 0
+        else
+          log_error "Failed to restore '$db' from .bak file."; return 1
+        fi
+      fi
+      local sql_file="$dump" temp_file=""
+      if [[ "$dump" == *.gz ]]; then
+        temp_file="/tmp/mssql_restore_$$.sql"
+        gunzip -c "$dump" > "$temp_file"
+        sql_file="$temp_file"
+      fi
+      if ms_run_sqlcmd_file "$ctr" "$port" "$db" "$sql_file"; then
+        [[ -n "$temp_file" ]] && rm -f "$temp_file"
+        log_success "Dump imported successfully into '$db'."; return 0
+      else
+        [[ -n "$temp_file" ]] && rm -f "$temp_file" 2>/dev/null || true
+        log_error "Failed to import dump into '$db'."; return 1
+      fi
+    }
+
+    [[ -n "$APIM_DB_DUMP" ]]   && { ms_import_dump "$ms_apim_container"   "apim_db"   "$ms_apim_port"   "$APIM_DB_DUMP"   || dump_failed=true; }
+    [[ -n "$SHARED_DB_DUMP" ]] && { ms_import_dump "$ms_shared_container" "shared_db" "$ms_shared_port" "$SHARED_DB_DUMP" || dump_failed=true; }
+
+    if [[ "$dump_failed" == "true" ]]; then
+      log_error "One or more dump restores failed."
+    else
+      log_success "MSSQL dump restore completed successfully."
+    fi
+  fi
+
   # Display connection information
   display_connection_info
 

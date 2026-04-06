@@ -9,9 +9,6 @@ for arg in "$@"; do
   esac
 done
 
-# This script use    log_error "curl    log_success "docker-compose standalone is available"is not available. Please install curl or ensure it's in your PATH." native tools to avoid installing additional dependencies:
-# - docker compose plugin instead of standalone docker-compose when available
-
 # Colors for better log visibility
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,15 +41,13 @@ log_verbose() {
 check_dependencies() {
   log_verbose "Checking for required native tools..."
 
-  # Check for curl (native on macOS and most Linux distributions)
   if ! command -v curl &> /dev/null; then
-    log_error "� curl is not available. Please install curl or ensure it's in your PATH."
+    log_error "curl is not available. Please install curl or ensure it's in your PATH."
     exit 1
   else
     log_verbose "curl is available"
   fi
 
-  # Check for docker
   if ! command -v docker &> /dev/null; then
     log_error "Docker is not installed. Please install Docker first."
     exit 1
@@ -60,7 +55,6 @@ check_dependencies() {
     log_verbose "Docker is available"
   fi
 
-  # Check for docker compose (prefer native docker compose plugin over standalone docker-compose)
   if docker compose version &> /dev/null; then
     log_verbose "Docker Compose plugin is available (using native 'docker compose')"
     DOCKER_COMPOSE_CMD="docker compose"
@@ -75,15 +69,17 @@ check_dependencies() {
 }
 
 # Function to wait for MySQL to be ready
+# Uses TCP check (-h 127.0.0.1) which only succeeds after the entrypoint
+# has fully completed (including any SQL file imports).
 wait_for_mysql() {
     local container_name="$1"
-    local max_attempts=30
+    local max_attempts="${2:-60}"
     local attempt=1
 
     log_info "Waiting for MySQL container '$container_name' to be ready..."
 
     while [ $attempt -le $max_attempts ]; do
-        if docker exec "$container_name" mysqladmin ping -h localhost -u root -prootpass --silent &>/dev/null; then
+        if docker exec "$container_name" mysqladmin ping -h 127.0.0.1 -u root -prootpass --silent &>/dev/null; then
             log_success "MySQL container '$container_name' is ready!"
             return 0
         fi
@@ -97,10 +93,202 @@ wait_for_mysql() {
     return 1
 }
 
+##############################################
+# MySQL version selection
+# Set MYSQL_VERSION env var to skip prompt.
+##############################################
+select_mysql_version() {
+    if [[ -n "${MYSQL_VERSION:-}" ]]; then
+        case "$MYSQL_VERSION" in
+            8.0|8.4) log_info "Using MySQL version: $MYSQL_VERSION (from environment)"; return ;;
+            *) log_error "Invalid MYSQL_VERSION '$MYSQL_VERSION'. Must be 8.0 or 8.4."; exit 1 ;;
+        esac
+    fi
+    echo ""
+    log_info "Select MySQL version:"
+    log_info "  1) MySQL 8.0"
+    log_info "  2) MySQL 8.4"
+    read -rp "Enter choice [1]: " version_choice
+    case "${version_choice:-1}" in
+        1) MYSQL_VERSION="8.0" ;;
+        2) MYSQL_VERSION="8.4" ;;
+        *) log_error "Invalid choice. Please enter 1 or 2."; exit 1 ;;
+    esac
+    log_info "Selected MySQL version: $MYSQL_VERSION"
+}
+
+##############################################
+# Collation selection
+# Set MYSQL_COLLATION env var to skip prompt.
+##############################################
+select_collation() {
+    if [[ -n "${MYSQL_COLLATION:-}" ]]; then
+        case "$MYSQL_COLLATION" in
+            latin1_bin|utf8mb4_bin) log_info "Using collation: $MYSQL_COLLATION (from environment)"; return ;;
+            *) log_error "Invalid MYSQL_COLLATION '$MYSQL_COLLATION'. Must be latin1_bin or utf8mb4_bin."; exit 1 ;;
+        esac
+    fi
+    echo ""
+    log_info "Select character set and collation:"
+    log_info "  1) latin1 / latin1_bin"
+    log_info "  2) utf8mb4 / utf8mb4_bin"
+    read -rp "Enter choice [1]: " collation_choice
+    case "${collation_choice:-1}" in
+        1) MYSQL_COLLATION="latin1_bin" ;;
+        2) MYSQL_COLLATION="utf8mb4_bin" ;;
+        *) log_error "Invalid choice. Please enter 1 or 2."; exit 1 ;;
+    esac
+    log_info "Selected collation: $MYSQL_COLLATION"
+}
+
+##############################################
+# Dump file prompting
+# Set APIM_DB_DUMP / SHARED_DB_DUMP env vars
+# to skip interactive prompt.
+##############################################
+prompt_for_dumps() {
+    APIM_DB_DUMP="${APIM_DB_DUMP:-}"
+    SHARED_DB_DUMP="${SHARED_DB_DUMP:-}"
+
+    # If both are already set via env, skip prompting
+    if [[ -n "$APIM_DB_DUMP" && -n "$SHARED_DB_DUMP" ]]; then
+        log_info "Using dump files from environment variables."
+        return
+    fi
+
+    echo ""
+    log_info "--------------------------------------------------"
+    log_info "Database Dump Import (Optional)"
+    log_info "--------------------------------------------------"
+    log_info "You can optionally provide database dump files to import."
+    log_info "If not provided, default initialization scripts will be used."
+    log_info "Press Enter to skip if you don't have dump files."
+    echo ""
+
+    if [[ -z "$APIM_DB_DUMP" ]]; then
+        read -rp "Path to APIM DB dump file (or press Enter to skip): " APIM_DB_DUMP
+    fi
+    if [[ -n "$APIM_DB_DUMP" ]]; then
+        APIM_DB_DUMP="${APIM_DB_DUMP/#\~/$HOME}"
+        [[ "$APIM_DB_DUMP" != /* ]] && APIM_DB_DUMP="$(pwd)/$APIM_DB_DUMP"
+        if [[ ! -f "$APIM_DB_DUMP" ]]; then
+            log_error "APIM DB dump file not found: $APIM_DB_DUMP"; exit 1
+        fi
+        log_success "APIM DB dump: $APIM_DB_DUMP"
+    fi
+
+    if [[ -z "$SHARED_DB_DUMP" ]]; then
+        read -rp "Path to Shared DB dump file (or press Enter to skip): " SHARED_DB_DUMP
+    fi
+    if [[ -n "$SHARED_DB_DUMP" ]]; then
+        SHARED_DB_DUMP="${SHARED_DB_DUMP/#\~/$HOME}"
+        [[ "$SHARED_DB_DUMP" != /* ]] && SHARED_DB_DUMP="$(pwd)/$SHARED_DB_DUMP"
+        if [[ ! -f "$SHARED_DB_DUMP" ]]; then
+            log_error "Shared DB dump file not found: $SHARED_DB_DUMP"; exit 1
+        fi
+        log_success "Shared DB dump: $SHARED_DB_DUMP"
+    fi
+
+    if [[ -n "$APIM_DB_DUMP" || -n "$SHARED_DB_DUMP" ]]; then
+        log_info "Dump files will be imported via Docker entrypoint on container start."
+    fi
+    echo ""
+}
+
+##############################################
+# Generate docker-compose.yaml
+#
+# When dump files are provided (APIM_DB_DUMP /
+# SHARED_DB_DUMP), they are mounted directly
+# into /docker-entrypoint-initdb.d/ so MySQL
+# imports them automatically on first start.
+##############################################
+generate_compose_file() {
+    local mysql_image="mysql:${MYSQL_VERSION}"
+    local charset auth_plugin_flag
+
+    # Determine charset from collation
+    case "$MYSQL_COLLATION" in
+        latin1_bin)   charset="latin1" ;;
+        utf8mb4_bin)  charset="utf8mb4" ;;
+    esac
+
+    # Authentication plugin flag differs between versions
+    case "$MYSQL_VERSION" in
+        8.0) auth_plugin_flag="--default-authentication-plugin=mysql_native_password" ;;
+        8.4) auth_plugin_flag="--mysql-native-password=ON" ;;
+    esac
+
+    local server_cmd="--character-set-server=${charset} --collation-server=${MYSQL_COLLATION} ${auth_plugin_flag}"
+
+    # Determine volumes for apim_db
+    local apim_volume
+    if [[ -n "${APIM_DB_DUMP:-}" ]]; then
+        apim_volume="      - ${APIM_DB_DUMP}:/docker-entrypoint-initdb.d/$(basename "$APIM_DB_DUMP"):ro"
+    else
+        apim_volume="      - ./dbscripts/apimgt:/docker-entrypoint-initdb.d"
+    fi
+
+    # Determine volumes for shared_db
+    local shared_volume
+    if [[ -n "${SHARED_DB_DUMP:-}" ]]; then
+        shared_volume="      - ${SHARED_DB_DUMP}:/docker-entrypoint-initdb.d/$(basename "$SHARED_DB_DUMP"):ro"
+    else
+        shared_volume="      - ./dbscripts:/docker-entrypoint-initdb.d"
+    fi
+
+    cat > docker-compose.yaml <<EOF
+version: '3.8'
+services:
+  apim_db:
+    image: ${mysql_image}
+    container_name: apim_db_container_mysql
+    environment:
+      MYSQL_DATABASE: apim_db
+      MYSQL_USER: apim_user
+      MYSQL_PASSWORD: apimpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    command: ${server_cmd}
+    volumes:
+${apim_volume}
+    ports:
+      - "3306:3306"
+
+  shared_db:
+    image: ${mysql_image}
+    container_name: shared_db_container_mysql
+    environment:
+      MYSQL_DATABASE: shared_db
+      MYSQL_USER: shared_user
+      MYSQL_PASSWORD: sharedpass
+      MYSQL_ROOT_PASSWORD: rootpass
+    command: ${server_cmd}
+    volumes:
+${shared_volume}
+    ports:
+      - "3307:3306"
+EOF
+
+    log_success "Generated docker-compose.yaml (MySQL ${MYSQL_VERSION}, ${MYSQL_COLLATION})"
+    if [[ -n "${APIM_DB_DUMP:-}" ]]; then
+        log_info "  APIM DB dump mounted via entrypoint: $(basename "$APIM_DB_DUMP")"
+    fi
+    if [[ -n "${SHARED_DB_DUMP:-}" ]]; then
+        log_info "  Shared DB dump mounted via entrypoint: $(basename "$SHARED_DB_DUMP")"
+    fi
+}
+
 log_info "Starting MySQL database initialization process..."
 [[ "$VERBOSE" == "false" ]] && log_info "(Run with -v for verbose output)"
 
 check_dependencies
+
+# Select MySQL version and collation (interactive or via env vars)
+select_mysql_version
+select_collation
+
+# Prompt for dump file paths (interactive or via env vars)
+prompt_for_dumps
 
 # Configuration file path
 CONFIG_FILE="repository/conf/deployment.toml"
@@ -179,8 +367,8 @@ fi
 
 # Download JDBC driver only if not present
 REPO_LIB_DIR="repository/components/lib"
-JDBC_URL="https://repo1.maven.org/maven2/mysql/mysql-connector-java/8.0.30/mysql-connector-java-8.0.30.jar"
-JDBC_DRIVER="mysql-connector-java-8.0.30.jar"
+JDBC_URL="https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/9.6.0/mysql-connector-j-9.6.0.jar"
+JDBC_DRIVER="mysql-connector-j-9.6.0.jar"
 JDBC_PATH="$REPO_LIB_DIR/$JDBC_DRIVER"
 
 log_verbose "Checking MySQL JDBC driver availability..."
@@ -233,6 +421,13 @@ if [ ! -f "$JDBC_PATH" ]; then
     fi
 fi
 
+# Generate docker-compose.yaml with selected version, collation, and dump mounts
+generate_compose_file
+
+# Tear down any existing containers/volumes so the entrypoint init runs fresh
+log_verbose "Cleaning up any existing MySQL containers and volumes..."
+$DOCKER_COMPOSE_CMD down -v 2>/dev/null || true
+
 # Start containers
 log_info "Starting MySQL Docker containers..."
 
@@ -247,11 +442,15 @@ if $DOCKER_COMPOSE_CMD up -d; then
     fi
 
     # Wait for databases to be fully ready
+    # TCP-based check (-h 127.0.0.1) ensures the entrypoint (including any
+    # dump imports) has completed before we report readiness.
     log_info "Waiting for databases to be ready..."
+    if [[ -n "$APIM_DB_DUMP" || -n "$SHARED_DB_DUMP" ]]; then
+        log_info "(This may take longer while dump files are being imported...)"
+    fi
 
-    # Wait for MySQL containers to be ready (proper health check)
-    wait_for_mysql "apim_db_container_mysql"
-    wait_for_mysql "shared_db_container_mysql"
+    wait_for_mysql "apim_db_container_mysql" 60
+    wait_for_mysql "shared_db_container_mysql" 60
 
     log_success "MySQL database initialization process completed!"
 
@@ -260,6 +459,8 @@ if $DOCKER_COMPOSE_CMD up -d; then
     log_info "==============================================="
     log_info "    DATABASE CONNECTION INFORMATION"
     log_info "==============================================="
+    log_info "  MySQL Version: $MYSQL_VERSION"
+    log_info "  Collation:     $MYSQL_COLLATION"
     echo
 
     log_info "APIM Database Connection Details:"

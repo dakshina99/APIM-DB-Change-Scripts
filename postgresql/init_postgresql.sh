@@ -81,11 +81,64 @@ check_dependencies() {
 ##############################################
 # Main Execution
 ##############################################
+##############################################
+# Dump file prompting
+# Set APIM_DB_DUMP / SHARED_DB_DUMP env vars
+# to skip interactive prompt.
+##############################################
+prompt_for_dumps() {
+    APIM_DB_DUMP="${APIM_DB_DUMP:-}"
+    SHARED_DB_DUMP="${SHARED_DB_DUMP:-}"
+
+    if [[ -n "$APIM_DB_DUMP" && -n "$SHARED_DB_DUMP" ]]; then
+        log_info "Using dump files from environment variables."
+        return
+    fi
+
+    echo ""
+    log_info "--------------------------------------------------"
+    log_info "Database Dump Import (Optional)"
+    log_info "--------------------------------------------------"
+    log_info "You can optionally provide database dump files to import."
+    log_info "Supported formats: .sql, .sql.gz, .dump (pg_restore custom format)"
+    log_info "If not provided, default initialization scripts will be used."
+    log_info "Press Enter to skip if you don't have dump files."
+    echo ""
+
+    if [[ -z "$APIM_DB_DUMP" ]]; then
+        read -rp "Path to APIM DB dump file (or press Enter to skip): " APIM_DB_DUMP
+    fi
+    if [[ -n "$APIM_DB_DUMP" ]]; then
+        APIM_DB_DUMP="${APIM_DB_DUMP/#\~/$HOME}"
+        [[ "$APIM_DB_DUMP" != /* ]] && APIM_DB_DUMP="$(pwd)/$APIM_DB_DUMP"
+        if [[ ! -f "$APIM_DB_DUMP" ]]; then
+            log_error "APIM DB dump file not found: $APIM_DB_DUMP"; exit 1
+        fi
+        log_success "APIM DB dump: $APIM_DB_DUMP"
+    fi
+
+    if [[ -z "$SHARED_DB_DUMP" ]]; then
+        read -rp "Path to Shared DB dump file (or press Enter to skip): " SHARED_DB_DUMP
+    fi
+    if [[ -n "$SHARED_DB_DUMP" ]]; then
+        SHARED_DB_DUMP="${SHARED_DB_DUMP/#\~/$HOME}"
+        [[ "$SHARED_DB_DUMP" != /* ]] && SHARED_DB_DUMP="$(pwd)/$SHARED_DB_DUMP"
+        if [[ ! -f "$SHARED_DB_DUMP" ]]; then
+            log_error "Shared DB dump file not found: $SHARED_DB_DUMP"; exit 1
+        fi
+        log_success "Shared DB dump: $SHARED_DB_DUMP"
+    fi
+    echo ""
+}
+
 main() {
   log_info "Starting PostgreSQL database initialization process..."
   [[ "$VERBOSE" == "false" ]] && log_info "(Run with -v for verbose output)"
 
   check_dependencies
+
+  # Prompt for dump file paths (interactive or via env vars)
+  prompt_for_dumps
 
   CONFIG_FILE="repository/conf/deployment.toml"
   DBSCRIPTS_DIR="dbscripts"
@@ -234,6 +287,59 @@ EOF
     sleep 10
 
     log_success "PostgreSQL database initialization process completed!"
+
+    # Inline dump restore if dump files were provided
+    if [[ -n "$APIM_DB_DUMP" || -n "$SHARED_DB_DUMP" ]]; then
+      log_info "======================================"
+      log_info "PostgreSQL Dump Restore"
+      log_info "======================================"
+
+      local pg_apim_container="apim_db_container_postgres"
+      local pg_shared_container="shared_db_container_postgres"
+      local dump_failed=false
+
+      # Helper: import a dump into a PostgreSQL database
+      pg_import_dump() {
+        local ctr="$1" db="$2" user="$3" dump="$4"
+        [[ -z "$dump" ]] && return 0
+        if [[ ! -f "$dump" ]]; then
+          log_error "Dump file not found: $dump"; return 1
+        fi
+        log_info "Importing dump into '$db' from: $(basename "$dump")"
+        if [[ "$dump" == *.dump ]]; then
+          local tmp="/tmp/pg_restore_$$.dump"
+          docker cp "$dump" "$ctr:$tmp"
+          if docker exec "$ctr" pg_restore -U "$user" -d "$db" --no-owner --no-privileges "$tmp"; then
+            docker exec "$ctr" rm -f "$tmp"
+            log_success "Dump imported successfully into '$db'."; return 0
+          else
+            docker exec "$ctr" rm -f "$tmp" 2>/dev/null || true
+            log_error "Failed to import dump into '$db'."; return 1
+          fi
+        elif [[ "$dump" == *.gz ]]; then
+          if gunzip -c "$dump" | docker exec -i "$ctr" psql -U "$user" -d "$db"; then
+            log_success "Dump imported successfully into '$db'."; return 0
+          else
+            log_error "Failed to import dump into '$db'."; return 1
+          fi
+        else
+          if docker exec -i "$ctr" psql -U "$user" -d "$db" < "$dump"; then
+            log_success "Dump imported successfully into '$db'."; return 0
+          else
+            log_error "Failed to import dump into '$db'."; return 1
+          fi
+        fi
+      }
+
+      [[ -n "$APIM_DB_DUMP" ]]   && { pg_import_dump "$pg_apim_container"   "apim_db"   "apim_user"   "$APIM_DB_DUMP"   || dump_failed=true; }
+      [[ -n "$SHARED_DB_DUMP" ]] && { pg_import_dump "$pg_shared_container" "shared_db" "shared_user" "$SHARED_DB_DUMP" || dump_failed=true; }
+
+      if [[ "$dump_failed" == "true" ]]; then
+        log_error "One or more dump restores failed."
+      else
+        log_success "PostgreSQL dump restore completed successfully."
+      fi
+    fi
 
     # Display comprehensive database connection information
     echo

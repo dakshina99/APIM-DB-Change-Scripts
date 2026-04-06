@@ -127,6 +127,16 @@ main() {
     log_info "MySQL Dump Restore"
     log_info "======================================"
 
+    # If dumps were loaded via Docker entrypoint (mounted into
+    # /docker-entrypoint-initdb.d/), skip external restore.
+    ENTRYPOINT_MARKER=".mysql-dump-via-entrypoint"
+    if [[ -f "$ENTRYPOINT_MARKER" ]]; then
+        log_info "Database dumps were loaded via Docker entrypoint initialization."
+        log_info "Skipping external restore — databases are already populated."
+        rm -f "$ENTRYPOINT_MARKER"
+        exit 0
+    fi
+
     if [[ -z "$APIM_DB_DUMP" && -z "$SHARED_DB_DUMP" ]]; then
         log_warning "No dump files provided (APIM_DB_DUMP / SHARED_DB_DUMP). Nothing to restore."
         exit 0
